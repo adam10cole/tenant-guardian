@@ -17,7 +17,8 @@ import { supabase } from '@/lib/supabase';
 import { StatusBadge } from '@/components/issue/StatusBadge';
 import { PhotoViewer } from '@/components/camera/PhotoViewer';
 import { daysUntilDeadline } from '@/lib/deadlines';
-import type { LocalIssue, LocalPhoto } from '@/types/database';
+import type { IssueStatus, LocalIssue, LocalPhoto } from '@/types/database';
+import { useUpdateIssueStatus } from '@/hooks/useUpdateIssueStatus';
 
 const PHOTO_SIZE = (Dimensions.get('window').width - 48) / 3;
 
@@ -54,7 +55,35 @@ export default function IssueDetailScreen() {
     enabled: !!id,
   });
 
+  const statusMutation = useUpdateIssueStatus(issue?.local_id, id);
+
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+  const STATUS_LABELS: Record<IssueStatus, string> = {
+    open: 'Open',
+    landlord_notified: 'Notified Landlord',
+    in_repair: 'In Repair',
+    resolved: 'Resolved',
+    escalated: 'Escalated',
+  };
+
+  function handleChangeStatus() {
+    if (!issue) return;
+    const options = (Object.keys(STATUS_LABELS) as IssueStatus[])
+      .filter((s) => s !== issue.status)
+      .map((s) => ({
+        text: STATUS_LABELS[s],
+        onPress: () =>
+          statusMutation.mutate({
+            status: s,
+            currentLandlordNotifiedAt: issue.landlord_notified_at,
+          }),
+      }));
+    Alert.alert('Change Status', 'Select a new status for this issue', [
+      ...options,
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
 
   async function handleGeneratePdf() {
     if (!issue?.id) {
@@ -213,12 +242,22 @@ export default function IssueDetailScreen() {
       </View>
 
       {/* Actions */}
-      <View className="mx-4 mt-4">
+      <View className="mx-4 mt-4 gap-3">
         <TouchableOpacity
           className="bg-primary-600 rounded-xl py-4 items-center"
           onPress={handleGeneratePdf}
         >
           <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          className="bg-white border border-gray-300 rounded-xl py-4 items-center"
+          onPress={handleChangeStatus}
+          disabled={statusMutation.isPending}
+        >
+          <Text className="text-gray-700 font-semibold text-base">
+            {statusMutation.isPending ? 'Updating…' : 'Change Status'}
+          </Text>
         </TouchableOpacity>
       </View>
 
