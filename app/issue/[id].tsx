@@ -1,11 +1,25 @@
-import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Image,
+  FlatList,
+  Dimensions,
+} from 'react-native';
+import { useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
 import { supabase } from '@/lib/supabase';
 import { StatusBadge } from '@/components/issue/StatusBadge';
+import { PhotoViewer } from '@/components/camera/PhotoViewer';
 import { daysUntilDeadline } from '@/lib/deadlines';
-import type { LocalIssue } from '@/types/database';
+import type { LocalIssue, LocalPhoto } from '@/types/database';
+
+const PHOTO_SIZE = (Dimensions.get('window').width - 48) / 3;
 
 async function fetchIssue(localId: string): Promise<LocalIssue | null> {
   const db = await getDb();
@@ -13,6 +27,15 @@ async function fetchIssue(localId: string): Promise<LocalIssue | null> {
     localId,
     localId,
   ]);
+}
+
+async function fetchPhotos(issueLocalId: string): Promise<LocalPhoto[]> {
+  const db = await getDb();
+  // Match on issue_local_id (offline) or issue_id (synced)
+  return db.getAllAsync<LocalPhoto>(
+    'SELECT * FROM photos WHERE issue_local_id = ? OR issue_id = ? ORDER BY taken_at ASC',
+    [issueLocalId, issueLocalId],
+  );
 }
 
 export default function IssueDetailScreen() {
@@ -24,6 +47,14 @@ export default function IssueDetailScreen() {
     queryFn: () => fetchIssue(id),
     enabled: !!id,
   });
+
+  const { data: photos = [] } = useQuery({
+    queryKey: ['photos', id],
+    queryFn: () => fetchPhotos(id),
+    enabled: !!id,
+  });
+
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   async function handleGeneratePdf() {
     if (!issue?.id) {
@@ -78,6 +109,7 @@ export default function IssueDetailScreen() {
 
   return (
     <ScrollView className="flex-1 bg-gray-50">
+      {/* Issue summary */}
       <View className="bg-white mx-4 mt-4 rounded-xl p-4 shadow-sm">
         <View className="flex-row items-center justify-between mb-2">
           <Text className="text-xl font-bold text-gray-900 capitalize">{issue.category}</Text>
@@ -119,6 +151,68 @@ export default function IssueDetailScreen() {
         )}
       </View>
 
+      {/* Evidence photos */}
+      <View className="mx-4 mt-4">
+        <Text className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+          Evidence Photos ({photos.length})
+        </Text>
+
+        {photos.length === 0 ? (
+          <View className="bg-white rounded-xl p-6 items-center shadow-sm">
+            <Text className="text-gray-400 text-sm">No photos attached to this issue.</Text>
+          </View>
+        ) : (
+          <>
+            <FlatList
+              data={photos}
+              keyExtractor={(p) => p.local_id ?? p.id}
+              numColumns={3}
+              scrollEnabled={false}
+              columnWrapperStyle={{ gap: 4 }}
+              ItemSeparatorComponent={() => <View style={{ height: 4 }} />}
+              renderItem={({ item, index }) => {
+                const uri = item.local_path ?? item.storage_path;
+                if (!uri) return null;
+
+                return (
+                  <TouchableOpacity
+                    style={{ width: PHOTO_SIZE, height: PHOTO_SIZE }}
+                    className="rounded-lg overflow-hidden bg-gray-100"
+                    onPress={() => setViewerIndex(index)}
+                    activeOpacity={0.85}
+                  >
+                    <Image
+                      source={{ uri }}
+                      style={{ width: PHOTO_SIZE, height: PHOTO_SIZE }}
+                      resizeMode="cover"
+                    />
+                    {item.sync_status !== 'synced' && (
+                      <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-0.5">
+                        <Text className="text-white text-center text-xs">Uploading…</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+
+            <PhotoViewer
+              photos={photos
+                .map((p) => ({
+                  uri: p.local_path ?? p.storage_path ?? '',
+                  takenAt: p.taken_at,
+                  localId: p.local_id,
+                }))
+                .filter((p) => p.uri !== '')}
+              initialIndex={viewerIndex ?? 0}
+              visible={viewerIndex !== null}
+              onClose={() => setViewerIndex(null)}
+            />
+          </>
+        )}
+      </View>
+
+      {/* Actions */}
       <View className="mx-4 mt-4">
         <TouchableOpacity
           className="bg-primary-600 rounded-xl py-4 items-center"
@@ -129,12 +223,14 @@ export default function IssueDetailScreen() {
       </View>
 
       {issue.sync_status !== 'synced' && (
-        <View className="mx-4 mt-3 p-3 bg-warning-500/10 rounded-xl">
+        <View className="mx-4 mt-3 mb-6 p-3 bg-warning-500/10 rounded-xl">
           <Text className="text-warning-600 text-xs text-center">
             Pending sync — connect to internet to upload
           </Text>
         </View>
       )}
+
+      <View className="h-8" />
     </ScrollView>
   );
 }

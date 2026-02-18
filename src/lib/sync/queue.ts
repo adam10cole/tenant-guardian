@@ -19,7 +19,7 @@
  *     the UI can surface these as "sync errors" for the user.
  */
 
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { getDb } from '@/lib/database/client';
 import { supabase } from '@/lib/supabase';
 import type {
@@ -248,8 +248,8 @@ async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
   const { localPath, ...photoMeta } = payload;
 
   // Verify the file still exists on device
-  const fileInfo = await FileSystem.getInfoAsync(localPath);
-  if (!fileInfo.exists) {
+  const file = new File(localPath);
+  if (!file.exists) {
     throw new Error(`Local photo file not found: ${localPath}`);
   }
 

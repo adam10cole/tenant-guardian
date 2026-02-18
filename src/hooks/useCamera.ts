@@ -1,7 +1,9 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import * as Location from 'expo-location';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
 import type { WizardPhoto } from '@/store/issueWizardStore';
 
 function generateLocalId(): string {
@@ -14,44 +16,29 @@ function generateLocalId(): string {
 
 /**
  * Computes a SHA-256 hash of the file at the given URI.
- * Uses expo-file-system to read as base64, then Web Crypto API.
+ *
+ * Uses expo-file-system v19's File class (which implements the Blob
+ * interface) to read raw bytes, then Web Crypto API for hashing.
+ * This produces the same hash as the generate-pdf Edge Function which
+ * also downloads and hashes raw bytes from Supabase Storage.
  */
 async function hashFile(uri: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  // Decode base64 to bytes
-  const binaryStr = atob(base64);
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-
-  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes.buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const file = new File(uri);
+  const arrayBuffer = await file.arrayBuffer();
+  return bytesToHex(sha256(new Uint8Array(arrayBuffer)));
 }
 
 /**
- * Applies a timestamp watermark to the image.
- * Returns the URI of the watermarked copy.
- *
- * Note: expo-image-manipulator does not support text overlays natively.
- * In production, add a text watermark via a canvas-based approach or
- * the generate-pdf Edge Function. Here we add a subtle crop as a placeholder.
+ * Normalizes the image for consistent hashing and reduces file size.
+ * Text watermarking is applied server-side at PDF generation time.
  */
 async function applyWatermark(uri: string, takenAt: string): Promise<string> {
-  // Currently returns original URI — text watermarking requires
-  // a canvas/SVG overlay not available in bare ImageManipulator.
-  // TODO: Implement watermark in src/lib/watermark.ts using SVG overlay.
   void takenAt;
 
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ resize: { width: 1920 } }], // Normalize size for consistent hashing
-    { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG },
-  );
+  const result = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1920 } }], {
+    compress: 0.92,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
 
   return result.uri;
 }
@@ -60,7 +47,7 @@ export function useCamera() {
   async function processImageUri(uri: string): Promise<WizardPhoto> {
     const takenAt = new Date().toISOString();
 
-    // Get GPS coordinates (optional — don't block if permission not granted)
+    // GPS coordinates are optional — don't block if permission not granted
     let latitude: number | null = null;
     let longitude: number | null = null;
     try {
@@ -73,7 +60,7 @@ export function useCamera() {
         longitude = loc.coords.longitude;
       }
     } catch {
-      // Location is optional for photos
+      // Location is optional
     }
 
     const watermarkedUri = await applyWatermark(uri, takenAt);
