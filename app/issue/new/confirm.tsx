@@ -144,7 +144,7 @@ export default function ConfirmStep() {
         </View>
 
         <TouchableOpacity
-          className={`rounded-xl py-4 items-center ${submitting ? 'bg-primary-300' : 'bg-primary-600'}`}
+          className={`rounded-full py-4 items-center ${submitting ? 'bg-primary-300' : 'bg-primary-600'}`}
           onPress={handleSubmit}
           disabled={submitting}
         >

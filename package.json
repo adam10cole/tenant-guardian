@@ -14,6 +14,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "@noble/hashes": "^1.8.0",
     "@react-native-community/netinfo": "11.4.1",
     "@supabase/supabase-js": "^2.49.1",
