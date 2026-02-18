@@ -32,6 +32,8 @@ Success is measured by legal validity of output, task completion rate, engagemen
 
 ## Getting Started
 
+**Prerequisites:** Node.js 18+ (includes npm). If you don't have it, install from [nodejs.org](https://nodejs.org/) or use [nvm](https://github.com/nvm-sh/nvm) and run `nvm install` in the project root (see `.nvmrc`).
+
 1. **Clone and install**
    ```bash
    git clone https://github.com/adam10cole/tenant-guardian.git
