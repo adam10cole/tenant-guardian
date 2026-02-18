@@ -1,0 +1,79 @@
+import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { useRouter } from 'expo-router';
+import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
+import { getPendingCount } from '@/lib/sync/queue';
+import { useEffect, useState } from 'react';
+
+export default function ProfileScreen() {
+  const { session, setSession } = useAuthStore();
+  const router = useRouter();
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    getPendingCount()
+      .then(setPendingCount)
+      .catch(() => {});
+  }, []);
+
+  async function handleSignOut() {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          setSession(null);
+          router.replace('/(auth)/login');
+        },
+      },
+    ]);
+  }
+
+  return (
+    <ScrollView className="flex-1 bg-gray-50">
+      <View className="bg-white mx-4 mt-4 rounded-xl p-4 shadow-sm">
+        <Text className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+          Account
+        </Text>
+        <Text className="text-base text-gray-800">{session?.user.email}</Text>
+      </View>
+
+      {pendingCount > 0 && (
+        <View className="bg-warning-500/10 border border-warning-500 mx-4 mt-4 rounded-xl p-4">
+          <Text className="text-warning-600 font-semibold">
+            {pendingCount} change{pendingCount > 1 ? 's' : ''} pending sync
+          </Text>
+          <Text className="text-warning-600 text-sm mt-1">
+            Connect to the internet to sync your data to the cloud.
+          </Text>
+        </View>
+      )}
+
+      <View className="bg-white mx-4 mt-4 rounded-xl overflow-hidden shadow-sm">
+        <TouchableOpacity
+          className="p-4 border-b border-gray-100"
+          onPress={() =>
+            Alert.alert('Coming soon', 'Profile editing will be added in a future update.')
+          }
+        >
+          <Text className="text-base text-gray-800">Edit Profile</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          className="p-4 border-b border-gray-100"
+          onPress={() =>
+            Alert.alert('Coming soon', 'Notification settings will be added in a future update.')
+          }
+        >
+          <Text className="text-base text-gray-800">Notifications</Text>
+        </TouchableOpacity>
+        <TouchableOpacity className="p-4" onPress={handleSignOut}>
+          <Text className="text-base text-danger-600">Sign Out</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text className="text-center text-xs text-gray-400 mt-6 mb-4">Tenant Guardian v1.0.0</Text>
+    </ScrollView>
+  );
+}
