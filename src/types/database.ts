@@ -118,6 +118,28 @@ export interface LocalPhoto extends Photo {
   sync_status: SyncStatus;
   /** Absolute local file path to raw (un-uploaded) photo */
   local_path: string | null;
+  /** Links photo to a specific timeline update entry; NULL = initial report photo */
+  update_local_id: string | null;
+}
+
+export type IssueUpdateEventType = 'update' | 'status_change';
+
+export interface IssueUpdate {
+  id: string;
+  local_id: string | null;
+  issue_id: string;
+  issue_local_id: string;
+  user_id: string;
+  event_type: IssueUpdateEventType;
+  note: string | null;
+  status_value: IssueStatus | null;
+  created_at: string;
+}
+
+export type IssueUpdateInsert = Omit<IssueUpdate, 'id'>;
+
+export interface LocalIssueUpdate extends IssueUpdate {
+  sync_status: SyncStatus;
 }
 
 export interface LocalCommunication extends Communication {
