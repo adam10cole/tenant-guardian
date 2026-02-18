@@ -24,6 +24,7 @@ import { getDb } from '@/lib/database/client';
 import { supabase } from '@/lib/supabase';
 import type {
   IssueInsert,
+  IssueUpdateInsert,
   PhotoInsert,
   CommunicationInsert,
   BuildingInsert,
@@ -81,6 +82,13 @@ export async function enqueueBuildingWrite(
   payload: BuildingInsert,
 ): Promise<void> {
   await enqueue('buildings', localId, 'insert', payload);
+}
+
+export async function enqueueIssueUpdateWrite(
+  localId: string,
+  payload: IssueUpdateInsert,
+): Promise<void> {
+  await enqueue('issue_updates', localId, 'insert', payload);
 }
 
 /**

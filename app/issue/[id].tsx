@@ -5,9 +5,8 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  TextInput,
   Image,
-  FlatList,
-  Dimensions,
 } from 'react-native';
 import { useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,11 +15,15 @@ import { getDb } from '@/lib/database/client';
 import { supabase } from '@/lib/supabase';
 import { StatusBadge } from '@/components/issue/StatusBadge';
 import { PhotoViewer } from '@/components/camera/PhotoViewer';
+import { IssueTimeline } from '@/components/issue/IssueTimeline';
 import { daysUntilDeadline } from '@/lib/deadlines';
-import type { IssueStatus, LocalIssue, LocalPhoto } from '@/types/database';
+import type { IssueStatus, LocalIssue, LocalIssueUpdate, LocalPhoto } from '@/types/database';
+import type { ViewerPhoto } from '@/components/camera/PhotoViewer';
+import type { WizardPhoto } from '@/store/issueWizardStore';
 import { useUpdateIssueStatus } from '@/hooks/useUpdateIssueStatus';
-
-const PHOTO_SIZE = (Dimensions.get('window').width - 48) / 3;
+import { useAddIssueUpdate } from '@/hooks/useAddIssueUpdate';
+import { useCamera } from '@/hooks/useCamera';
+import { useAuthStore } from '@/store/authStore';
 
 async function fetchIssue(localId: string): Promise<LocalIssue | null> {
   const db = await getDb();
@@ -32,16 +35,27 @@ async function fetchIssue(localId: string): Promise<LocalIssue | null> {
 
 async function fetchPhotos(issueLocalId: string): Promise<LocalPhoto[]> {
   const db = await getDb();
-  // Match on issue_local_id (offline) or issue_id (synced)
   return db.getAllAsync<LocalPhoto>(
     'SELECT * FROM photos WHERE issue_local_id = ? OR issue_id = ? ORDER BY taken_at ASC',
     [issueLocalId, issueLocalId],
   );
 }
 
+async function fetchUpdates(issueLocalId: string): Promise<LocalIssueUpdate[]> {
+  const db = await getDb();
+  return db.getAllAsync<LocalIssueUpdate>(
+    'SELECT * FROM issue_updates WHERE issue_local_id = ? ORDER BY created_at ASC',
+    [issueLocalId],
+  );
+}
+
+const THUMB_SIZE = 64;
+
 export default function IssueDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { session } = useAuthStore();
+  const userId = session?.user.id;
 
   const { data: issue, isLoading } = useQuery({
     queryKey: ['issue', id],
@@ -55,9 +69,24 @@ export default function IssueDetailScreen() {
     enabled: !!id,
   });
 
-  const statusMutation = useUpdateIssueStatus(issue?.local_id, id);
+  const { data: updates = [] } = useQuery({
+    queryKey: ['updates', id],
+    queryFn: () => fetchUpdates(id),
+    enabled: !!id,
+  });
 
+  const statusMutation = useUpdateIssueStatus(issue?.local_id, id, userId);
+  const addUpdateMutation = useAddIssueUpdate(issue?.local_id, id);
+  const { takePhoto, pickFromLibrary } = useCamera();
+
+  // PhotoViewer state
+  const [viewerPhotos, setViewerPhotos] = useState<ViewerPhoto[]>([]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+  // Add-update form state
+  const [showAddUpdate, setShowAddUpdate] = useState(false);
+  const [updateNote, setUpdateNote] = useState('');
+  const [stagedPhotos, setStagedPhotos] = useState<WizardPhoto[]>([]);
 
   const STATUS_LABELS: Record<IssueStatus, string> = {
     open: 'Open',
@@ -66,6 +95,11 @@ export default function IssueDetailScreen() {
     resolved: 'Resolved',
     escalated: 'Escalated',
   };
+
+  function handlePhotoPress(photos: ViewerPhoto[], index: number) {
+    setViewerPhotos(photos);
+    setViewerIndex(index);
+  }
 
   function handleChangeStatus() {
     if (!issue) return;
@@ -115,6 +149,48 @@ export default function IssueDetailScreen() {
     }
   }
 
+  async function handleTakePhoto() {
+    try {
+      const photo = await takePhoto();
+      if (photo) setStagedPhotos((prev) => [...prev, photo]);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not take photo');
+    }
+  }
+
+  async function handlePickPhoto() {
+    try {
+      const photo = await pickFromLibrary();
+      if (photo) setStagedPhotos((prev) => [...prev, photo]);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not pick photo');
+    }
+  }
+
+  async function handleSaveUpdate() {
+    if (!userId) {
+      Alert.alert('Not signed in', 'Please sign in to add an update.');
+      return;
+    }
+    if (!updateNote.trim() && stagedPhotos.length === 0) {
+      Alert.alert('Empty update', 'Please add a note or photo before saving.');
+      return;
+    }
+    addUpdateMutation.mutate(
+      { userId, note: updateNote.trim(), photos: stagedPhotos },
+      {
+        onSuccess: () => {
+          setShowAddUpdate(false);
+          setUpdateNote('');
+          setStagedPhotos([]);
+        },
+        onError: (err) => {
+          Alert.alert('Error', err instanceof Error ? err.message : 'Could not save update');
+        },
+      },
+    );
+  }
+
   if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center">
@@ -144,8 +220,6 @@ export default function IssueDetailScreen() {
           <Text className="text-xl font-bold text-gray-900 capitalize">{issue.category}</Text>
           <StatusBadge status={issue.status} />
         </View>
-
-        {issue.description && <Text className="text-gray-600 mt-2">{issue.description}</Text>}
 
         <View className="mt-4 pt-4 border-t border-gray-100">
           <Text className="text-xs text-gray-400">First reported</Text>
@@ -180,76 +254,109 @@ export default function IssueDetailScreen() {
         )}
       </View>
 
-      {/* Evidence photos */}
+      {/* Timeline */}
       <View className="mx-4 mt-4">
         <Text className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-          Evidence Photos ({photos.length})
+          Timeline
         </Text>
-
-        {photos.length === 0 ? (
-          <View className="bg-white rounded-xl p-6 items-center shadow-sm">
-            <Text className="text-gray-400 text-sm">No photos attached to this issue.</Text>
-          </View>
-        ) : (
-          <>
-            <FlatList
-              data={photos}
-              keyExtractor={(p) => p.local_id ?? p.id}
-              numColumns={3}
-              scrollEnabled={false}
-              columnWrapperStyle={{ gap: 4 }}
-              ItemSeparatorComponent={() => <View style={{ height: 4 }} />}
-              renderItem={({ item, index }) => {
-                const uri = item.local_path ?? item.storage_path;
-                if (!uri) return null;
-
-                return (
-                  <TouchableOpacity
-                    style={{ width: PHOTO_SIZE, height: PHOTO_SIZE }}
-                    className="rounded-lg overflow-hidden bg-gray-100"
-                    onPress={() => setViewerIndex(index)}
-                    activeOpacity={0.85}
-                  >
-                    <Image
-                      source={{ uri }}
-                      style={{ width: PHOTO_SIZE, height: PHOTO_SIZE }}
-                      resizeMode="cover"
-                    />
-                    {item.sync_status !== 'synced' && (
-                      <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-0.5">
-                        <Text className="text-white text-center text-xs">Uploading…</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              }}
-            />
-
-            <PhotoViewer
-              photos={photos
-                .map((p) => ({
-                  uri: p.local_path ?? p.storage_path ?? '',
-                  takenAt: p.taken_at,
-                  localId: p.local_id,
-                }))
-                .filter((p) => p.uri !== '')}
-              initialIndex={viewerIndex ?? 0}
-              visible={viewerIndex !== null}
-              onClose={() => setViewerIndex(null)}
-            />
-          </>
-        )}
+        <IssueTimeline
+          issue={issue}
+          photos={photos}
+          updates={updates}
+          onPhotoPress={handlePhotoPress}
+        />
       </View>
 
-      {/* Actions */}
-      <View className="mx-4 mt-4 gap-3">
-        <TouchableOpacity
-          className="bg-primary-600 rounded-xl py-4 items-center"
-          onPress={handleGeneratePdf}
-        >
-          <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
-        </TouchableOpacity>
+      {/* Inline add-update form */}
+      {showAddUpdate && (
+        <View className="bg-white mx-4 mt-4 rounded-xl p-4 shadow-sm">
+          <TextInput
+            className="border border-gray-200 rounded-lg p-3 text-sm text-gray-800 min-h-[80px]"
+            placeholder="Describe the update (optional)…"
+            placeholderTextColor="#9ca3af"
+            multiline
+            textAlignVertical="top"
+            value={updateNote}
+            onChangeText={setUpdateNote}
+          />
 
+          <View className="flex-row gap-3 mt-3">
+            <TouchableOpacity
+              className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
+              onPress={handleTakePhoto}
+            >
+              <Text className="text-sm text-gray-700">📷 Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
+              onPress={handlePickPhoto}
+            >
+              <Text className="text-sm text-gray-700">🖼 Library</Text>
+            </TouchableOpacity>
+          </View>
+
+          {stagedPhotos.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3">
+              <View className="flex-row gap-2">
+                {stagedPhotos.map((photo) => (
+                  <TouchableOpacity
+                    key={photo.localId}
+                    onPress={() =>
+                      setStagedPhotos((prev) => prev.filter((p) => p.localId !== photo.localId))
+                    }
+                  >
+                    <Image
+                      source={{ uri: photo.uri }}
+                      style={{ width: THUMB_SIZE, height: THUMB_SIZE }}
+                      className="rounded-lg"
+                    />
+                    <View className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/50 items-center justify-center">
+                      <Text className="text-white text-xs">✕</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+
+          <View className="flex-row gap-3 mt-3">
+            <TouchableOpacity
+              className="flex-1 bg-primary-600 rounded-xl py-3 items-center"
+              onPress={handleSaveUpdate}
+              disabled={addUpdateMutation.isPending}
+            >
+              <Text className="text-white font-semibold text-sm">
+                {addUpdateMutation.isPending ? 'Saving…' : 'Save Update'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="flex-1 bg-white border border-gray-300 rounded-xl py-3 items-center"
+              onPress={() => {
+                setShowAddUpdate(false);
+                setUpdateNote('');
+                setStagedPhotos([]);
+              }}
+            >
+              <Text className="text-gray-700 font-semibold text-sm">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Add Update button */}
+      {!showAddUpdate && (
+        <View className="mx-4 mt-3">
+          <TouchableOpacity
+            className="bg-white border border-gray-300 rounded-xl py-3 items-center"
+            onPress={() => setShowAddUpdate(true)}
+          >
+            <Text className="text-gray-700 font-semibold text-sm">+ Add Update</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Actions */}
+      <View className="mx-4 mt-3 gap-3">
         <TouchableOpacity
           className="bg-white border border-gray-300 rounded-xl py-4 items-center"
           onPress={handleChangeStatus}
@@ -258,6 +365,13 @@ export default function IssueDetailScreen() {
           <Text className="text-gray-700 font-semibold text-base">
             {statusMutation.isPending ? 'Updating…' : 'Change Status'}
           </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          className="bg-primary-600 rounded-xl py-4 items-center"
+          onPress={handleGeneratePdf}
+        >
+          <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
         </TouchableOpacity>
       </View>
 
@@ -268,6 +382,14 @@ export default function IssueDetailScreen() {
           </Text>
         </View>
       )}
+
+      {/* PhotoViewer modal */}
+      <PhotoViewer
+        photos={viewerPhotos}
+        initialIndex={viewerIndex ?? 0}
+        visible={viewerIndex !== null}
+        onClose={() => setViewerIndex(null)}
+      />
 
       <View className="h-8" />
     </ScrollView>

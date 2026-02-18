@@ -91,4 +91,27 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
         ON sync_queue(next_retry_at);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS issue_updates (
+        id               TEXT,
+        local_id         TEXT PRIMARY KEY,
+        issue_local_id   TEXT NOT NULL,
+        issue_id         TEXT,
+        user_id          TEXT NOT NULL,
+        event_type       TEXT NOT NULL DEFAULT 'update',
+        note             TEXT,
+        status_value     TEXT,
+        created_at       TEXT NOT NULL,
+        sync_status      TEXT NOT NULL DEFAULT 'pending_insert',
+        FOREIGN KEY (issue_local_id) REFERENCES issues(local_id) ON DELETE CASCADE
+      );
+
+      ALTER TABLE photos ADD COLUMN update_local_id TEXT;
+
+      CREATE INDEX IF NOT EXISTS issue_updates_issue_idx
+        ON issue_updates(issue_local_id, created_at);
+    `,
+  },
 ];
