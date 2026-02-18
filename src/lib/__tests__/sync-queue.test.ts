@@ -10,11 +10,9 @@ jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: jest.fn(),
 }));
 
-// Mock expo-file-system
+// Mock expo-file-system (v19 class-based API)
 jest.mock('expo-file-system', () => ({
-  getInfoAsync: jest.fn().mockResolvedValue({ exists: true }),
-  readAsStringAsync: jest.fn().mockResolvedValue('base64data'),
-  EncodingType: { Base64: 'base64' },
+  File: jest.fn().mockImplementation(() => ({ exists: true })),
 }));
 
 // Mock supabase client
