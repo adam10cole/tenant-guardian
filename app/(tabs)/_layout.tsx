@@ -1,13 +1,5 @@
 import { Tabs } from 'expo-router';
-import { View } from 'react-native';
-
-function TabBarIcon({ symbol: _symbol, focused }: { symbol: string; focused: boolean }) {
-  return (
-    <View className="items-center justify-center">
-      <View className={`w-6 h-6 rounded ${focused ? 'bg-primary-600' : 'bg-gray-400'}`} />
-    </View>
-  );
-}
+import { Ionicons } from '@expo/vector-icons';
 
 export default function TabsLayout() {
   return (
@@ -26,21 +18,27 @@ export default function TabsLayout() {
         options={{
           title: 'My Issues',
           tabBarLabel: 'Issues',
-          tabBarIcon: ({ focused }) => <TabBarIcon symbol="list" focused={focused} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="list-outline" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="heatmap"
         options={{
           title: 'Heatmap',
-          tabBarIcon: ({ focused }) => <TabBarIcon symbol="map" focused={focused} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="map-outline" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ focused }) => <TabBarIcon symbol="person" focused={focused} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-outline" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>
