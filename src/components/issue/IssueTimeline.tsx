@@ -16,7 +16,7 @@ function buildEntries(
   photos: LocalPhoto[],
   updates: LocalIssueUpdate[],
 ): TimelineEntry[] {
-  const initialPhotos = photos.filter((p) => !p.update_local_id);
+  const initialPhotos = photos.filter((p) => !p.update_id && !p.update_local_id);
 
   const initial: TimelineEntry = {
     kind: 'initial',
@@ -32,7 +32,9 @@ function buildEntries(
     return {
       kind: 'update',
       update: u,
-      photos: photos.filter((p) => p.update_local_id === u.local_id),
+      photos: photos.filter((p) =>
+        p.update_id ? p.update_id === u.id : p.update_local_id === u.local_id,
+      ),
     };
   });
 
