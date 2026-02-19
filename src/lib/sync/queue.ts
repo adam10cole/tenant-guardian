@@ -294,6 +294,10 @@ async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
 
   const storagePath = `${photoMeta.user_id}/${issueRow.id}/${entry.local_id}.jpg`;
 
+  await db.runAsync("UPDATE photos SET sync_status = 'uploading' WHERE local_id = ?", [
+    entry.local_id,
+  ]);
+
   // Upload bytes
   const arrayBuffer = await file.arrayBuffer();
   const { error: uploadError } = await supabase.storage
@@ -320,11 +324,10 @@ async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
   if (insertError) throw new Error(`Photo insert error: ${insertError.message}`);
 
   // Update local DB with server id and storage path (optional: also store update_id if column exists)
-  await db.runAsync('UPDATE photos SET id = ?, storage_path = ? WHERE local_id = ?', [
-    data.id,
-    storagePath,
-    entry.local_id,
-  ]);
+  await db.runAsync(
+    'UPDATE photos SET id = ?, storage_path = ?, sync_status = ? WHERE local_id = ?',
+    [data.id, storagePath, 'synced', entry.local_id],
+  );
 }
 
 // -------------------------------------------------------

@@ -91,11 +91,11 @@ function PhotoGrid({ photos, onPhotoPress }: PhotoGridProps) {
               style={{ width: THUMB_SIZE, height: THUMB_SIZE }}
               resizeMode="cover"
             />
-            {photo.sync_status !== 'synced' && (
+            {/*{photo.sync_status !== 'synced' && (
               <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-0.5">
                 <Text className="text-white text-center text-xs">Uploading…</Text>
               </View>
-            )}
+            )}*/}
           </TouchableOpacity>
         );
       })}
