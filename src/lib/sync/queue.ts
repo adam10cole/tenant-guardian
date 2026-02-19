@@ -387,6 +387,146 @@ export async function getPendingCount(): Promise<number> {
 }
 
 /**
+ * Clears all local SQLite data. Call before signing out so the next
+ * user doesn't see stale data from the previous session.
+ */
+export async function clearLocalData(): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM sync_queue');
+    await db.runAsync('DELETE FROM issue_updates');
+    await db.runAsync('DELETE FROM photos');
+    await db.runAsync('DELETE FROM issues');
+    await db.runAsync('DELETE FROM communications');
+  });
+}
+
+/**
+ * Seeds the local SQLite database from Supabase for a given user.
+ * Only runs when there is no existing local data for the user (e.g. new
+ * device, or after a sign-out that cleared local data).
+ */
+export async function seedFromSupabase(userId: string): Promise<void> {
+  const db = await getDb();
+
+  const existing = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM issues WHERE user_id = ?',
+    [userId],
+  );
+  if ((existing?.count ?? 0) > 0) return;
+
+  // Fetch issues
+  const { data: issues } = await supabase.from('issues').select('*').eq('user_id', userId);
+
+  if (!issues?.length) return;
+
+  for (const issue of issues) {
+    const localId = issue.local_id ?? issue.id;
+    await db.runAsync(
+      `INSERT OR REPLACE INTO issues
+       (id, local_id, user_id, building_id, category, status, description,
+        first_reported_at, landlord_notified_at, legal_deadline_days, legal_deadline_at,
+        client_updated_at, created_at, sync_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+      [
+        issue.id,
+        localId,
+        issue.user_id,
+        issue.building_id ?? null,
+        issue.category,
+        issue.status,
+        issue.description ?? null,
+        issue.first_reported_at,
+        issue.landlord_notified_at ?? null,
+        issue.legal_deadline_days ?? null,
+        issue.legal_deadline_at ?? null,
+        issue.client_updated_at,
+        issue.created_at,
+      ],
+    );
+  }
+
+  // Fetch photos (storage_path lets the UI display them without a local file)
+  const { data: photos } = await supabase.from('photos').select('*').eq('user_id', userId);
+
+  if (photos?.length) {
+    for (const photo of photos) {
+      const localId = photo.local_id ?? photo.id;
+      const issueRow = await db.getFirstAsync<{ local_id: string }>(
+        'SELECT local_id FROM issues WHERE id = ?',
+        [photo.issue_id],
+      );
+      if (!issueRow) continue;
+      await db.runAsync(
+        `INSERT OR REPLACE INTO photos
+         (id, local_id, issue_local_id, issue_id, user_id, storage_path, watermarked_path,
+          taken_at, latitude, longitude, photo_hash, local_path, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'synced')`,
+        [
+          photo.id,
+          localId,
+          issueRow.local_id,
+          photo.issue_id,
+          photo.user_id,
+          photo.storage_path,
+          photo.watermarked_path ?? null,
+          photo.taken_at,
+          photo.latitude ?? null,
+          photo.longitude ?? null,
+          photo.photo_hash,
+          photo.created_at,
+        ],
+      );
+    }
+  }
+
+  // Fetch issue_updates (issue_updates is not in the generated Database type, so cast to any)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: updates } = (await (supabase as any)
+    .from('issue_updates')
+    .select('*')
+    .eq('user_id', userId)) as {
+    data: Array<{
+      id: string;
+      local_id: string | null;
+      issue_id: string;
+      user_id: string;
+      event_type: string;
+      note: string | null;
+      status_value: string | null;
+      created_at: string;
+    }> | null;
+  };
+
+  if (updates?.length) {
+    for (const update of updates) {
+      const localId = update.local_id ?? update.id;
+      const issueRow = await db.getFirstAsync<{ local_id: string }>(
+        'SELECT local_id FROM issues WHERE id = ?',
+        [update.issue_id],
+      );
+      if (!issueRow) continue;
+      await db.runAsync(
+        `INSERT OR REPLACE INTO issue_updates
+         (id, local_id, issue_local_id, issue_id, user_id, event_type, note, status_value, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+        [
+          update.id,
+          localId,
+          issueRow.local_id,
+          update.issue_id,
+          update.user_id,
+          update.event_type,
+          update.note ?? null,
+          update.status_value ?? null,
+          update.created_at,
+        ],
+      );
+    }
+  }
+}
+
+/**
  * Returns entries that have exhausted all retry attempts.
  * The UI should surface these as persistent errors for the user.
  */

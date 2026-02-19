@@ -58,7 +58,6 @@ export function useUpdateIssueStatus(
       await enqueueIssueUpdateWrite(updateLocalId, {
         local_id: updateLocalId,
         issue_id: localId,
-        issue_local_id: localId,
         user_id: userId,
         event_type: 'status_change',
         note: null,

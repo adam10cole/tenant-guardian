@@ -136,7 +136,8 @@ export interface IssueUpdate {
   created_at: string;
 }
 
-export type IssueUpdateInsert = Omit<IssueUpdate, 'id'>;
+// issue_local_id is a local SQLite–only field; it is never sent to Supabase
+export type IssueUpdateInsert = Omit<IssueUpdate, 'id' | 'issue_local_id'>;
 
 export interface LocalIssueUpdate extends IssueUpdate {
   sync_status: SyncStatus;

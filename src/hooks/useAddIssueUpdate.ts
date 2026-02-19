@@ -37,7 +37,6 @@ export function useAddIssueUpdate(issueLocalId: string | null | undefined, route
       await enqueueIssueUpdateWrite(updateLocalId, {
         local_id: updateLocalId,
         issue_id: issueLocalId,
-        issue_local_id: issueLocalId,
         user_id: userId,
         event_type: 'update',
         note: note || null,

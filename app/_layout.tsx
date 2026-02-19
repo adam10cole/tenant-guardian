@@ -5,11 +5,13 @@
 
 import '../global.css';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '@/store/authStore';
+import { useOfflineQueue } from '@/hooks/useOfflineQueue';
+import { seedFromSupabase } from '@/lib/sync/queue';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,10 +42,29 @@ function AuthGuard() {
   return null;
 }
 
+function AppServices() {
+  const { session } = useAuthStore();
+  const prevUserIdRef = useRef<string | null>(null);
+
+  useOfflineQueue();
+
+  useEffect(() => {
+    const userId = session?.user.id ?? null;
+    if (userId && userId !== prevUserIdRef.current) {
+      // New user logged in — seed local DB from Supabase if empty
+      seedFromSupabase(userId).catch(() => {});
+    }
+    prevUserIdRef.current = userId;
+  }, [session]);
+
+  return null;
+}
+
 export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGuard />
+      <AppServices />
       <StatusBar style="auto" />
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
