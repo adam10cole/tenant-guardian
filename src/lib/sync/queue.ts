@@ -255,40 +255,29 @@ async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
   const payload = JSON.parse(entry.payload!) as PhotoInsert & { localPath: string };
   const { localPath, ...photoMeta } = payload;
 
-  // Verify the file still exists on device
   const file = new File(localPath);
-  if (!file.exists) {
-    throw new Error(`Local photo file not found: ${localPath}`);
-  }
+  if (!file.exists) throw new Error(`Local photo file not found: ${localPath}`);
 
   const db = await getDb();
 
-  // Resolve issue local_id → server id
   const issueRow = await db.getFirstAsync<{ id: string | null; local_id: string }>(
     'SELECT id, local_id FROM issues WHERE local_id = ?',
-    [photoMeta.issue_id], // issue_id holds local_id before resolution
+    [photoMeta.issue_id],
   );
-
-  if (!issueRow?.id) {
+  if (!issueRow?.id)
     throw new Error('Parent issue server ID not yet resolved; waiting for issue sync');
-  }
 
-  // Build storage path: {userId}/{issueId}/{localId}.jpg
   const storagePath = `${photoMeta.user_id}/${issueRow.id}/${entry.local_id}.jpg`;
 
-  // Upload raw bytes to Supabase Storage
-  const { error: uploadError } = await supabase.storage.from('evidence-photos').upload(
-    storagePath,
-    {
-      uri: localPath,
-      type: 'image/jpeg',
-      name: `${entry.local_id}.jpg`,
-    } as unknown as File,
-    {
+  // ✅ REAL BYTES
+  const arrayBuffer = await file.arrayBuffer();
+
+  const { error: uploadError } = await supabase.storage
+    .from('evidence-photos')
+    .upload(storagePath, arrayBuffer, {
       upsert: false,
       contentType: 'image/jpeg',
-    },
-  );
+    });
 
   if (uploadError) throw new Error(`Storage upload error: ${uploadError.message}`);
 
