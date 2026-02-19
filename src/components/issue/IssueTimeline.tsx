@@ -16,7 +16,7 @@ function buildEntries(
   photos: LocalPhoto[],
   updates: LocalIssueUpdate[],
 ): TimelineEntry[] {
-  const initialPhotos = photos.filter((p) => !p.update_local_id);
+  const initialPhotos = photos.filter((p) => !p.update_id && !p.update_local_id);
 
   const initial: TimelineEntry = {
     kind: 'initial',
@@ -32,7 +32,9 @@ function buildEntries(
     return {
       kind: 'update',
       update: u,
-      photos: photos.filter((p) => p.update_local_id === u.local_id),
+      photos: photos.filter((p) =>
+        p.update_id ? p.update_id === u.id : p.update_local_id === u.local_id,
+      ),
     };
   });
 
@@ -89,11 +91,11 @@ function PhotoGrid({ photos, onPhotoPress }: PhotoGridProps) {
               style={{ width: THUMB_SIZE, height: THUMB_SIZE }}
               resizeMode="cover"
             />
-            {photo.sync_status !== 'synced' && (
+            {/*{photo.sync_status !== 'synced' && (
               <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-0.5">
                 <Text className="text-white text-center text-xs">Uploading…</Text>
               </View>
-            )}
+            )}*/}
           </TouchableOpacity>
         );
       })}

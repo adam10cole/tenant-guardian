@@ -1,20 +1,25 @@
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
-import { getPendingCount } from '@/lib/sync/queue';
-import { useEffect, useState } from 'react';
+import { getPendingCount, clearLocalData } from '@/lib/sync/queue';
+import { useCallback, useState } from 'react';
 
 export default function ProfileScreen() {
   const { session, setSession } = useAuthStore();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [pendingCount, setPendingCount] = useState(0);
 
-  useEffect(() => {
-    getPendingCount()
-      .then(setPendingCount)
-      .catch(() => {});
-  }, []);
+  // Refresh pending count every time this tab comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      getPendingCount()
+        .then(setPendingCount)
+        .catch(() => {});
+    }, []),
+  );
 
   async function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -23,6 +28,8 @@ export default function ProfileScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
+          await clearLocalData().catch(() => {});
+          queryClient.clear();
           await supabase.auth.signOut();
           setSession(null);
           router.replace('/(auth)/login');

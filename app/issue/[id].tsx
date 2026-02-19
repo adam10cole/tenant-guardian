@@ -35,9 +35,25 @@ async function fetchIssue(localId: string): Promise<LocalIssue | null> {
 
 async function fetchPhotos(issueLocalId: string): Promise<LocalPhoto[]> {
   const db = await getDb();
-  return db.getAllAsync<LocalPhoto>(
+  const photos = await db.getAllAsync<LocalPhoto>(
     'SELECT * FROM photos WHERE issue_local_id = ? OR issue_id = ? ORDER BY taken_at ASC',
     [issueLocalId, issueLocalId],
+  );
+
+  // For photos seeded from Supabase (no local file), generate signed URLs so they can be displayed
+  const needUrls = photos.filter((p) => !p.local_path && p.storage_path);
+  if (needUrls.length === 0) return photos;
+
+  const { data: signed } = await supabase.storage.from('evidence-photos').createSignedUrls(
+    needUrls.map((p) => p.storage_path!),
+    60 * 60, // 1 hour
+  );
+
+  if (!signed) return photos;
+
+  const urlMap = new Map(signed.map((s) => [s.path, s.signedUrl]));
+  return photos.map((p) =>
+    !p.local_path && p.storage_path ? { ...p, local_path: urlMap.get(p.storage_path) ?? null } : p,
   );
 }
 

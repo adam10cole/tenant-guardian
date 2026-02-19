@@ -34,6 +34,11 @@ import type {
 // Types
 // -------------------------------------------------------
 
+export type PhotoUploadPayload = PhotoInsert & {
+  localPath: string;
+  updateLocalId?: string | null; // local-only
+};
+
 export type QueueOperation = 'insert' | 'update' | 'photo_upload';
 
 export interface QueueEntry {
@@ -99,8 +104,14 @@ export async function enqueuePhotoUpload(
   localId: string,
   localPath: string,
   payload: PhotoInsert,
+  updateLocalId?: string | null,
 ): Promise<void> {
-  await enqueue('photos', localId, 'photo_upload', { localPath, ...payload });
+  const fullPayload: PhotoUploadPayload = {
+    localPath,
+    updateLocalId: updateLocalId ?? null,
+    ...payload,
+  };
+  await enqueue('photos', localId, 'photo_upload', fullPayload);
 }
 
 async function enqueue(
@@ -252,47 +263,52 @@ async function handleRowSync(entry: QueueEntry): Promise<void> {
 // -------------------------------------------------------
 
 async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
-  const payload = JSON.parse(entry.payload!) as PhotoInsert & { localPath: string };
-  const { localPath, ...photoMeta } = payload;
+  const payload = JSON.parse(entry.payload!) as PhotoUploadPayload;
+  const { localPath, updateLocalId, ...photoMeta } = payload;
 
-  // Verify the file still exists on device
   const file = new File(localPath);
-  if (!file.exists) {
-    throw new Error(`Local photo file not found: ${localPath}`);
-  }
+  if (!file.exists) throw new Error(`Local photo file not found: ${localPath}`);
 
   const db = await getDb();
 
-  // Resolve issue local_id → server id
   const issueRow = await db.getFirstAsync<{ id: string | null; local_id: string }>(
     'SELECT id, local_id FROM issues WHERE local_id = ?',
-    [photoMeta.issue_id], // issue_id holds local_id before resolution
+    [photoMeta.issue_id],
   );
-
   if (!issueRow?.id) {
     throw new Error('Parent issue server ID not yet resolved; waiting for issue sync');
   }
 
-  // Build storage path: {userId}/{issueId}/{localId}.jpg
+  // Resolve updateLocalId -> server update UUID (update_id)
+  let updateId: string | null = null;
+  if (updateLocalId) {
+    const updateRow = await db.getFirstAsync<{ id: string | null }>(
+      'SELECT id FROM issue_updates WHERE local_id = ?',
+      [updateLocalId],
+    );
+    if (!updateRow?.id) {
+      throw new Error('Parent update server ID not yet resolved; waiting for update sync');
+    }
+    updateId = updateRow.id;
+  }
+
   const storagePath = `${photoMeta.user_id}/${issueRow.id}/${entry.local_id}.jpg`;
 
-  // Upload raw bytes to Supabase Storage
-  const { error: uploadError } = await supabase.storage.from('evidence-photos').upload(
-    storagePath,
-    {
-      uri: localPath,
-      type: 'image/jpeg',
-      name: `${entry.local_id}.jpg`,
-    } as unknown as File,
-    {
+  await db.runAsync("UPDATE photos SET sync_status = 'uploading' WHERE local_id = ?", [
+    entry.local_id,
+  ]);
+
+  // Upload bytes
+  const arrayBuffer = await file.arrayBuffer();
+  const { error: uploadError } = await supabase.storage
+    .from('evidence-photos')
+    .upload(storagePath, arrayBuffer, {
       upsert: false,
       contentType: 'image/jpeg',
-    },
-  );
+    });
 
   if (uploadError) throw new Error(`Storage upload error: ${uploadError.message}`);
 
-  // Insert photo metadata row into Supabase
   const { data, error: insertError } = await supabase
     .from('photos')
     .insert({
@@ -300,18 +316,18 @@ async function handlePhotoUpload(entry: QueueEntry): Promise<void> {
       issue_id: issueRow.id,
       storage_path: storagePath,
       local_id: entry.local_id,
+      update_id: updateId,
     })
     .select('id')
     .single();
 
   if (insertError) throw new Error(`Photo insert error: ${insertError.message}`);
 
-  // Update local DB with server id and storage path
-  await db.runAsync('UPDATE photos SET id = ?, storage_path = ? WHERE local_id = ?', [
-    data.id,
-    storagePath,
-    entry.local_id,
-  ]);
+  // Update local DB with server id and storage path (optional: also store update_id if column exists)
+  await db.runAsync(
+    'UPDATE photos SET id = ?, storage_path = ?, sync_status = ? WHERE local_id = ?',
+    [data.id, storagePath, 'synced', entry.local_id],
+  );
 }
 
 // -------------------------------------------------------
@@ -384,6 +400,162 @@ export async function getPendingCount(): Promise<number> {
     [MAX_ATTEMPTS],
   );
   return row?.count ?? 0;
+}
+
+/**
+ * Clears all local SQLite data. Call before signing out so the next
+ * user doesn't see stale data from the previous session.
+ */
+export async function clearLocalData(): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM sync_queue');
+    await db.runAsync('DELETE FROM issue_updates');
+    await db.runAsync('DELETE FROM photos');
+    await db.runAsync('DELETE FROM issues');
+    await db.runAsync('DELETE FROM communications');
+  });
+}
+
+/**
+ * Seeds the local SQLite database from Supabase for a given user.
+ * Only runs when there is no existing local data for the user (e.g. new
+ * device, or after a sign-out that cleared local data).
+ */
+export async function seedFromSupabase(userId: string): Promise<void> {
+  const db = await getDb();
+
+  const existing = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM issues WHERE user_id = ?',
+    [userId],
+  );
+  if ((existing?.count ?? 0) > 0) return;
+
+  // Fetch issues
+  const { data: issues } = await supabase.from('issues').select('*').eq('user_id', userId);
+
+  if (!issues?.length) return;
+
+  for (const issue of issues) {
+    const localId = issue.local_id ?? issue.id;
+    await db.runAsync(
+      `INSERT OR REPLACE INTO issues
+       (id, local_id, user_id, building_id, category, status, description,
+        first_reported_at, landlord_notified_at, legal_deadline_days, legal_deadline_at,
+        client_updated_at, created_at, sync_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+      [
+        issue.id,
+        localId,
+        issue.user_id,
+        issue.building_id ?? null,
+        issue.category,
+        issue.status,
+        issue.description ?? null,
+        issue.first_reported_at,
+        issue.landlord_notified_at ?? null,
+        issue.legal_deadline_days ?? null,
+        issue.legal_deadline_at ?? null,
+        issue.client_updated_at,
+        issue.created_at,
+      ],
+    );
+  }
+
+  // Fetch issue_updates FIRST (we need them to map photos.update_id -> update_local_id)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: updates } = (await (supabase as any)
+    .from('issue_updates')
+    .select('*')
+    .eq('user_id', userId)) as {
+    data: Array<{
+      id: string;
+      local_id: string | null;
+      issue_id: string;
+      user_id: string;
+      event_type: string;
+      note: string | null;
+      status_value: string | null;
+      created_at: string;
+    }> | null;
+  };
+
+  if (updates?.length) {
+    for (const update of updates) {
+      const localId = update.local_id ?? update.id;
+      const issueRow = await db.getFirstAsync<{ local_id: string }>(
+        'SELECT local_id FROM issues WHERE id = ?',
+        [update.issue_id],
+      );
+      if (!issueRow) continue;
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO issue_updates
+         (id, local_id, issue_local_id, issue_id, user_id, event_type, note, status_value, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+        [
+          update.id,
+          localId,
+          issueRow.local_id,
+          update.issue_id,
+          update.user_id,
+          update.event_type,
+          update.note ?? null,
+          update.status_value ?? null,
+          update.created_at,
+        ],
+      );
+    }
+  }
+
+  // Build map: server update UUID -> local update local_id
+  const updateRows = await db.getAllAsync<{ id: string; local_id: string }>(
+    'SELECT id, local_id FROM issue_updates WHERE user_id = ?',
+    [userId],
+  );
+  const updateIdToLocalId = new Map(updateRows.map((u) => [u.id, u.local_id]));
+
+  // Fetch photos AFTER updates so we can populate update_local_id locally
+  const { data: photos } = await supabase.from('photos').select('*').eq('user_id', userId);
+
+  if (photos?.length) {
+    for (const photo of photos) {
+      const localId = photo.local_id ?? photo.id;
+
+      const issueRow = await db.getFirstAsync<{ local_id: string }>(
+        'SELECT local_id FROM issues WHERE id = ?',
+        [photo.issue_id],
+      );
+      if (!issueRow) continue;
+
+      // Map server FK -> local update local id (used by your timeline)
+      const updateLocalId = photo.update_id
+        ? (updateIdToLocalId.get(photo.update_id) ?? null)
+        : null;
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO photos
+         (id, local_id, issue_local_id, issue_id, user_id, storage_path, watermarked_path,
+          taken_at, latitude, longitude, photo_hash, local_path, update_local_id, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'synced')`,
+        [
+          photo.id,
+          localId,
+          issueRow.local_id,
+          photo.issue_id,
+          photo.user_id,
+          photo.storage_path,
+          photo.watermarked_path ?? null,
+          photo.taken_at,
+          photo.latitude ?? null,
+          photo.longitude ?? null,
+          photo.photo_hash,
+          updateLocalId,
+          photo.created_at,
+        ],
+      );
+    }
+  }
 }
 
 /**

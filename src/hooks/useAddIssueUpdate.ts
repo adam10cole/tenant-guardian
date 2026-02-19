@@ -37,7 +37,6 @@ export function useAddIssueUpdate(issueLocalId: string | null | undefined, route
       await enqueueIssueUpdateWrite(updateLocalId, {
         local_id: updateLocalId,
         issue_id: issueLocalId,
-        issue_local_id: issueLocalId,
         user_id: userId,
         event_type: 'update',
         note: note || null,
@@ -64,17 +63,22 @@ export function useAddIssueUpdate(issueLocalId: string | null | undefined, route
             now,
           ],
         );
-        await enqueuePhotoUpload(photo.localId, photo.uri, {
-          issue_id: issueLocalId,
-          user_id: userId,
-          storage_path: '',
-          taken_at: photo.takenAt,
-          latitude: photo.latitude ?? null,
-          longitude: photo.longitude ?? null,
-          photo_hash: photo.hash,
-          local_id: photo.localId,
-          watermarked_path: null,
-        });
+        await enqueuePhotoUpload(
+          photo.localId,
+          photo.uri,
+          {
+            issue_id: issueLocalId,
+            user_id: userId,
+            storage_path: '',
+            taken_at: photo.takenAt,
+            latitude: photo.latitude ?? null,
+            longitude: photo.longitude ?? null,
+            photo_hash: photo.hash,
+            local_id: photo.localId,
+            watermarked_path: null,
+          },
+          updateLocalId,
+        );
       }
     },
     onSuccess: () => {
