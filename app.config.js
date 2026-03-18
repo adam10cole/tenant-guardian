@@ -1,0 +1,86 @@
+module.exports = {
+  expo: {
+    name: 'Tenant Guardian',
+    slug: 'tenant-guardian',
+    version: '1.0.0',
+    orientation: 'portrait',
+    icon: './assets/icon.png',
+    scheme: 'tenant-guardian',
+    userInterfaceStyle: 'automatic',
+    newArchEnabled: true,
+    splash: {
+      image: './assets/splash-icon.png',
+      resizeMode: 'contain',
+      backgroundColor: '#1a56db',
+    },
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: 'edu.umich.eecs497.tenantguardian',
+      infoPlist: {
+        NSCameraUsageDescription: 'Take photos of housing issues as evidence.',
+        NSPhotoLibraryUsageDescription:
+          'Access your photo library to attach existing photos as evidence.',
+        NSLocationWhenInUseUsageDescription:
+          'Geotag your photos for stronger legal evidence.',
+      },
+      config: {
+        googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+      },
+    },
+    android: {
+      adaptiveIcon: {
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#1a56db',
+      },
+      package: 'edu.umich.eecs497.tenantguardian',
+      permissions: [
+        'android.permission.CAMERA',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
+        'android.permission.RECEIVE_BOOT_COMPLETED',
+        'android.permission.VIBRATE',
+      ],
+      minSdkVersion: 23,
+      edgeToEdgeEnabled: true,
+      config: {
+        googleMaps: {
+          apiKey: process.env.GOOGLE_MAPS_API_KEY,
+        },
+      },
+    },
+    web: {
+      bundler: 'metro',
+      output: 'static',
+      favicon: './assets/favicon.png',
+    },
+    plugins: [
+      'expo-router',
+      'expo-secure-store',
+      [
+        'expo-camera',
+        {
+          cameraPermission: 'Take photos of housing issues as evidence.',
+        },
+      ],
+      [
+        'expo-location',
+        {
+          locationWhenInUsePermission:
+            'Geotag your photos for stronger legal evidence.',
+        },
+      ],
+      'expo-sqlite',
+      'expo-task-manager',
+    ],
+    experiments: {
+      typedRoutes: true,
+    },
+    extra: {
+      eas: {
+        projectId: '5c06f947-a829-42f8-a08c-cb4cb95256ed',
+      },
+    },
+  },
+};

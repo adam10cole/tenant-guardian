@@ -1,5 +1,5 @@
 import { View, Text, ActivityIndicator } from 'react-native';
-import MapView, { Heatmap, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Heatmap, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useHeatmap } from '@/hooks/useHeatmap';
 
 export default function HeatmapScreen() {
@@ -16,8 +16,8 @@ export default function HeatmapScreen() {
   return (
     <View className="flex-1">
       <MapView
-        className="flex-1"
-        provider={PROVIDER_DEFAULT}
+        style={{ flex: 1 }}
+        provider={PROVIDER_GOOGLE}
         initialRegion={{
           latitude: 42.2808,
           longitude: -83.743,
