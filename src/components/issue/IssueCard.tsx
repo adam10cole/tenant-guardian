@@ -40,7 +40,7 @@ export function IssueCard({ issue }: IssueCardProps) {
 
   return (
     <Link href={`/issue/${issue.local_id ?? issue.id}`} asChild>
-      <TouchableOpacity className="bg-white rounded-xl p-4 mb-3 shadow-sm active:opacity-80">
+      <TouchableOpacity className="bg-white rounded-xl p-4 shadow-sm active:opacity-80">
         <View className="flex-row items-start justify-between mb-2">
           <Text className="text-base font-semibold text-gray-900 capitalize flex-1 mr-2">
             {issue.category.replace('_', ' ')}

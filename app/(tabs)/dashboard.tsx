@@ -1,18 +1,40 @@
-import { View, Text, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { Link } from 'expo-router';
 import { useIssues } from '@/hooks/useIssues';
+import { useDeleteIssue } from '@/hooks/useDeleteIssue';
 import { IssueCard } from '@/components/issue/IssueCard';
+import { SwipeableRow } from '@/components/issue/SwipeableRow';
 import type { LocalIssue } from '@/types/database';
 
 export default function DashboardScreen() {
   const { issues, isLoading, refresh } = useIssues();
+  const deleteMutation = useDeleteIssue();
+
+  function confirmDelete(issue: LocalIssue) {
+    Alert.alert(
+      'Delete Issue',
+      'This will permanently delete this issue and all its photos, updates, and communications. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMutation.mutate(issue),
+        },
+      ],
+    );
+  }
 
   return (
     <View className="flex-1 bg-gray-50">
       <FlatList
         data={issues}
         keyExtractor={(item: LocalIssue) => item.local_id ?? item.id}
-        renderItem={({ item }) => <IssueCard issue={item} />}
+        renderItem={({ item }) => (
+          <SwipeableRow onDelete={() => confirmDelete(item)}>
+            <IssueCard issue={item} />
+          </SwipeableRow>
+        )}
         refreshControl={
           <RefreshControl refreshing={isLoading} onRefresh={refresh} tintColor="#1a56db" />
         }
