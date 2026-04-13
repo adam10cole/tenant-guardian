@@ -13,6 +13,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
 import { supabase } from '@/lib/supabase';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { StatusBadge } from '@/components/issue/StatusBadge';
 import { PhotoViewer } from '@/components/camera/PhotoViewer';
 import { IssueTimeline } from '@/components/issue/IssueTimeline';
@@ -103,6 +105,7 @@ export default function IssueDetailScreen() {
   const [showAddUpdate, setShowAddUpdate] = useState(false);
   const [updateNote, setUpdateNote] = useState('');
   const [stagedPhotos, setStagedPhotos] = useState<WizardPhoto[]>([]);
+  const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
   const STATUS_LABELS: Record<IssueStatus, string> = {
     open: 'Open',
@@ -141,27 +144,53 @@ export default function IssueDetailScreen() {
       return;
     }
 
-    Alert.alert('Generating PDF', 'Building your evidence report...');
+    setIsPdfGenerating(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('generate-pdf', {
-        body: { issueId: issue.id },
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const fnUrl = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/generate-pdf`;
+      const response = await fetch(fnUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ issueId: issue.id }),
       });
 
-      if (error) throw error;
+      const responseText = await response.text();
 
-      Alert.alert('PDF Ready', 'Your evidence report has been generated.', [
-        { text: 'OK' },
-        {
-          text: 'Open',
-          onPress: () => {
-            /* handled by the app's URL handler */
-          },
-        },
-      ]);
-      console.log('PDF URL:', data.signedUrl);
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`;
+        try {
+          const body = JSON.parse(responseText);
+          if (body?.error) message = body.error;
+        } catch {}
+        throw new Error(message);
+      }
+
+      const { signedUrl } = JSON.parse(responseText);
+
+      // Download the PDF to a local temp file then open the native share sheet
+      const localPath = `${FileSystem.cacheDirectory}evidence-report-${issue.id}.pdf`;
+      const download = await FileSystem.downloadAsync(signedUrl, localPath);
+      if (download.status !== 200) {
+        throw new Error('Failed to download PDF');
+      }
+
+      await Sharing.shareAsync(localPath, {
+        mimeType: 'application/pdf',
+        UTI: 'com.adobe.pdf',
+        dialogTitle: 'Evidence Report',
+      });
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Could not generate PDF');
+    } finally {
+      setIsPdfGenerating(false);
     }
   }
 
@@ -386,8 +415,13 @@ export default function IssueDetailScreen() {
         <TouchableOpacity
           className="bg-primary-600 rounded-xl py-4 items-center"
           onPress={handleGeneratePdf}
+          disabled={isPdfGenerating}
         >
-          <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
+          {isPdfGenerating ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
+          )}
         </TouchableOpacity>
       </View>
 
