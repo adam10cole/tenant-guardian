@@ -71,6 +71,14 @@ interface BuildingRow {
   zip: string | null;
 }
 
+interface IssueUpdateRow {
+  id: string;
+  event_type: string;
+  note: string | null;
+  status_value: string | null;
+  created_at: string;
+}
+
 // -------------------------------------------------------
 // Main handler
 // -------------------------------------------------------
@@ -90,146 +98,161 @@ Deno.serve(async (req: Request) => {
     return errorResponse('Method not allowed', 405);
   }
 
-  // -------------------------------------------------------
-  // Auth: extract caller's JWT and verify ownership
-  // -------------------------------------------------------
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return errorResponse('Missing authorization header', 401);
-  }
-
-  // Caller-scoped client (respects RLS)
-  const callerClient = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const {
-    data: { user },
-    error: authError,
-  } = await callerClient.auth.getUser();
-  if (authError || !user) {
-    return errorResponse('Unauthorized', 401);
-  }
-
-  // -------------------------------------------------------
-  // Parse request body
-  // -------------------------------------------------------
-  let body: GeneratePdfRequest;
   try {
-    body = (await req.json()) as GeneratePdfRequest;
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
+    // -------------------------------------------------------
+    // Auth: extract caller's JWT and verify ownership
+    // -------------------------------------------------------
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return errorResponse('Missing authorization header', 401);
+    }
 
-  const { issueId } = body;
-  if (!issueId || typeof issueId !== 'string') {
-    return errorResponse('issueId is required', 400);
-  }
-
-  // -------------------------------------------------------
-  // Fetch data using service role client (bypasses RLS for joins)
-  // We've already verified the caller owns this issue via RLS below.
-  // -------------------------------------------------------
-  const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-  // Verify ownership via RLS by using the caller's scoped client
-  const { data: issueCheck, error: ownerError } = await callerClient
-    .from('issues')
-    .select('id')
-    .eq('id', issueId)
-    .single();
-
-  if (ownerError || !issueCheck) {
-    return errorResponse('Issue not found or access denied', 404);
-  }
-
-  // Now fetch full details with admin client
-  const [issueResult, photosResult, commsResult] = await Promise.all([
-    adminClient
-      .from('issues')
-      .select('*, buildings(address_line1, address_line2, city, state, zip)')
-      .eq('id', issueId)
-      .single(),
-    adminClient
-      .from('photos')
-      .select('id, storage_path, taken_at, latitude, longitude, photo_hash')
-      .eq('issue_id', issueId)
-      .order('taken_at', { ascending: true }),
-    adminClient
-      .from('communications')
-      .select('id, direction, method, summary, occurred_at')
-      .eq('issue_id', issueId)
-      .order('occurred_at', { ascending: true }),
-  ]);
-
-  if (issueResult.error) return errorResponse('Failed to fetch issue', 500);
-
-  const issue = issueResult.data as IssueRow & { buildings: BuildingRow | null };
-  const photos = (photosResult.data ?? []) as PhotoRow[];
-  const communications = (commsResult.data ?? []) as CommunicationRow[];
-
-  // -------------------------------------------------------
-  // Build PDF
-  // -------------------------------------------------------
-  const pdfDoc = await PDFDocument.create();
-  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  // -- Cover page --
-  addCoverPage(pdfDoc, helvetica, helveticaBold, issue, user.email ?? '');
-
-  // -- Issue detail page --
-  addIssuePage(pdfDoc, helvetica, helveticaBold, issue);
-
-  // -- Communications log --
-  if (communications.length > 0) {
-    addCommunicationsPage(pdfDoc, helvetica, helveticaBold, communications);
-  }
-
-  // -- Photo pages with hash verification --
-  const hashResults: Array<{ path: string; expected: string; actual: string; match: boolean }> = [];
-
-  for (const photo of photos) {
-    const result = await addPhotoPage(pdfDoc, helvetica, helveticaBold, photo, adminClient);
-    hashResults.push(result);
-  }
-
-  // -- Hash verification summary --
-  addHashSummaryPage(pdfDoc, helvetica, helveticaBold, hashResults);
-
-  // -------------------------------------------------------
-  // Save PDF to Supabase Storage
-  // -------------------------------------------------------
-  const pdfBytes = await pdfDoc.save();
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const pdfPath = `${user.id}/${issueId}/${timestamp}.pdf`;
-
-  const { error: uploadError } = await adminClient.storage
-    .from(EXPORT_BUCKET)
-    .upload(pdfPath, pdfBytes, {
-      contentType: 'application/pdf',
-      upsert: false,
+    // Caller-scoped client (respects RLS)
+    const callerClient = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: authHeader } },
     });
 
-  if (uploadError) return errorResponse(`Failed to save PDF: ${uploadError.message}`, 500);
+    const {
+      data: { user },
+      error: authError,
+    } = await callerClient.auth.getUser();
+    if (authError || !user) {
+      return errorResponse('Unauthorized', 401);
+    }
 
-  // -------------------------------------------------------
-  // Generate signed URL (1 hour)
-  // -------------------------------------------------------
-  const { data: signedData, error: signedError } = await adminClient.storage
-    .from(EXPORT_BUCKET)
-    .createSignedUrl(pdfPath, 3600);
+    // -------------------------------------------------------
+    // Parse request body
+    // -------------------------------------------------------
+    let body: GeneratePdfRequest;
+    try {
+      body = (await req.json()) as GeneratePdfRequest;
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
 
-  if (signedError || !signedData) {
-    return errorResponse('Failed to create signed URL', 500);
+    const { issueId } = body;
+    if (!issueId || typeof issueId !== 'string') {
+      return errorResponse('issueId is required', 400);
+    }
+
+    // -------------------------------------------------------
+    // Fetch data using service role client (bypasses RLS for joins)
+    // -------------------------------------------------------
+    const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    // Verify ownership via RLS by using the caller's scoped client
+    const { data: issueCheck, error: ownerError } = await callerClient
+      .from('issues')
+      .select('id')
+      .eq('id', issueId)
+      .single();
+
+    if (ownerError || !issueCheck) {
+      return errorResponse('Issue not found or access denied', 404);
+    }
+
+    // Now fetch full details with admin client
+    const [issueResult, photosResult, commsResult, updatesResult] = await Promise.all([
+      adminClient
+        .from('issues')
+        .select('*, buildings(address_line1, address_line2, city, state, zip)')
+        .eq('id', issueId)
+        .single(),
+      adminClient
+        .from('photos')
+        .select('id, storage_path, taken_at, latitude, longitude, photo_hash')
+        .eq('issue_id', issueId)
+        .order('taken_at', { ascending: true }),
+      adminClient
+        .from('communications')
+        .select('id, direction, method, summary, occurred_at')
+        .eq('issue_id', issueId)
+        .order('occurred_at', { ascending: true }),
+      adminClient
+        .from('issue_updates')
+        .select('id, event_type, note, status_value, created_at')
+        .eq('issue_id', issueId)
+        .order('created_at', { ascending: true }),
+    ]);
+
+    if (issueResult.error) {
+      return errorResponse(`Failed to fetch issue: ${issueResult.error.message}`, 500);
+    }
+
+    const issue = issueResult.data as IssueRow & { buildings: BuildingRow | null };
+    const photos = (photosResult.data ?? []) as PhotoRow[];
+    const communications = (commsResult.data ?? []) as CommunicationRow[];
+    const updates = (updatesResult.data ?? []) as IssueUpdateRow[];
+
+    // -------------------------------------------------------
+    // Build PDF
+    // -------------------------------------------------------
+    const pdfDoc = await PDFDocument.create();
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    addCoverPage(pdfDoc, helvetica, helveticaBold, issue, user.email ?? '');
+    addIssuePage(pdfDoc, helvetica, helveticaBold, issue);
+
+    if (updates.length > 0) {
+      addTimelinePage(pdfDoc, helvetica, helveticaBold, issue, updates);
+    }
+
+    if (communications.length > 0) {
+      addCommunicationsPage(pdfDoc, helvetica, helveticaBold, communications);
+    }
+
+    const hashResults: Array<{ path: string; expected: string; actual: string; match: boolean }> =
+      [];
+    for (const photo of photos) {
+      const result = await addPhotoPage(pdfDoc, helvetica, helveticaBold, photo, adminClient);
+      hashResults.push(result);
+    }
+
+    addHashSummaryPage(pdfDoc, helvetica, helveticaBold, hashResults);
+
+    // -------------------------------------------------------
+    // Save PDF to Supabase Storage
+    // -------------------------------------------------------
+    const pdfBytes = await pdfDoc.save();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const pdfPath = `${user.id}/${issueId}/${timestamp}.pdf`;
+
+    const { error: uploadError } = await adminClient.storage
+      .from(EXPORT_BUCKET)
+      .upload(pdfPath, pdfBytes, {
+        contentType: 'application/pdf',
+        upsert: false,
+      });
+
+    if (uploadError) {
+      return errorResponse(`Failed to save PDF: ${uploadError.message}`, 500);
+    }
+
+    // -------------------------------------------------------
+    // Generate signed URL (1 hour)
+    // -------------------------------------------------------
+    const { data: signedData, error: signedError } = await adminClient.storage
+      .from(EXPORT_BUCKET)
+      .createSignedUrl(pdfPath, 3600);
+
+    if (signedError || !signedData) {
+      return errorResponse('Failed to create signed URL', 500);
+    }
+
+    return new Response(JSON.stringify({ signedUrl: signedData.signedUrl, pdfPath }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  } catch (err) {
+    console.error('[generate-pdf] uncaught error:', err);
+    return errorResponse(
+      `Internal error: ${err instanceof Error ? err.message : String(err)}`,
+      500,
+    );
   }
-
-  return new Response(JSON.stringify({ signedUrl: signedData.signedUrl, pdfPath }), {
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-  });
 });
 
 // -------------------------------------------------------
@@ -422,6 +445,97 @@ function addIssuePage(
   addPageFooter(page, font, 2);
 }
 
+function addTimelinePage(
+  pdfDoc: PDFDocument,
+  font: PDFFont,
+  boldFont: PDFFont,
+  issue: IssueRow,
+  updates: IssueUpdateRow[],
+): void {
+  const page = pdfDoc.addPage([612, 792]);
+  const { width, height } = page.getSize();
+  let y = height - 60;
+
+  drawSectionHeader(page, boldFont, 'Issue Timeline', y);
+  y -= 30;
+
+  // Dot colors per entry type (greyscale-safe approximations)
+  const DOT_COLORS: Record<string, [number, number, number]> = {
+    initial: [0.42, 0.45, 0.5], // grey
+    update: [0.1, 0.33, 0.85], // blue
+    status_change: [0.49, 0.23, 0.93], // purple
+  };
+
+  type Entry =
+    | { kind: 'initial'; date: string; note: string | null }
+    | { kind: 'update'; date: string; note: string | null }
+    | { kind: 'status_change'; date: string; status: string | null };
+
+  const entries: Entry[] = [
+    { kind: 'initial', date: issue.first_reported_at, note: issue.description },
+    ...updates.map(
+      (u): Entry =>
+        u.event_type === 'status_change'
+          ? { kind: 'status_change', date: u.created_at, status: u.status_value }
+          : { kind: 'update', date: u.created_at, note: u.note },
+    ),
+  ];
+
+  for (const entry of entries) {
+    if (y < 80) break;
+
+    const [r, g, b] = DOT_COLORS[entry.kind];
+    page.drawCircle({ x: 50, y: y + 3, size: 5, color: rgb(r, g, b) });
+
+    let label: string;
+    let detail: string;
+
+    if (entry.kind === 'initial') {
+      label = 'Initial Report';
+      detail = entry.note ?? '(no description)';
+    } else if (entry.kind === 'status_change') {
+      label = 'Status Changed';
+      detail = entry.status ? `-> ${formatStatus(entry.status)}` : '';
+    } else {
+      label = 'Update';
+      detail = entry.note ?? '(no note)';
+    }
+
+    page.drawText(label, {
+      x: 65,
+      y,
+      size: 10,
+      font: boldFont,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+    page.drawText(formatDate(entry.date), {
+      x: 200,
+      y,
+      size: 9,
+      font,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+
+    if (detail) {
+      y -= 16;
+      page.drawText(detail, {
+        x: 65,
+        y,
+        size: 9,
+        font,
+        color: rgb(0.25, 0.25, 0.25),
+        maxWidth: width - 105,
+        lineHeight: 13,
+      });
+      y -= estimateTextHeight(detail, width - 105, 9, 13);
+    }
+
+    y -= 18;
+  }
+
+  addPageFooter(page, font, 3);
+}
+
 function addCommunicationsPage(
   pdfDoc: PDFDocument,
   font: PDFFont,
@@ -476,10 +590,19 @@ function addCommunicationsPage(
 
     y -= 78;
 
-    if (y < 80) break; // Prevent overflow — full pagination out of scope
+    if (y < 80) {
+      page.drawText('(Additional entries omitted — report truncated at page boundary)', {
+        x: 44,
+        y: y + 10,
+        size: 8,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      break;
+    }
   }
 
-  addPageFooter(page, font, 3);
+  addPageFooter(page, font, 4);
 }
 
 async function addPhotoPage(
@@ -569,7 +692,7 @@ async function addPhotoPage(
 
   // Hash integrity section
   const hashColor = hashMatch ? rgb(0.1, 0.6, 0.1) : rgb(0.8, 0.1, 0.1);
-  const hashStatus = hashMatch ? '✓ VERIFIED' : '✗ MISMATCH — FILE MAY HAVE BEEN ALTERED';
+  const hashStatus = hashMatch ? '[OK] VERIFIED' : '[FAIL] MISMATCH - FILE MAY HAVE BEEN ALTERED';
 
   page.drawRectangle({
     x: 30,
@@ -653,7 +776,7 @@ function addHashSummaryPage(
       font: boldFont,
       color: rgb(0.1, 0.1, 0.1),
     });
-    page.drawText(result.match ? '✓ OK' : '✗ MISMATCH', {
+    page.drawText(result.match ? '[OK]' : '[FAIL]', {
       x: width - 90,
       y: y - 12,
       size: 9,

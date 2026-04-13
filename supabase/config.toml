@@ -65,7 +65,7 @@ double_confirm_changes = true
 enable_confirmations = true
 
 [functions.generate-pdf]
-verify_jwt = true
+verify_jwt = false
 
 [functions.send-notifications]
 verify_jwt = true
