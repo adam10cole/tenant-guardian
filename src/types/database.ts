@@ -23,6 +23,12 @@ export type CommMethod = 'email' | 'text' | 'call' | 'letter' | 'in_person';
 
 export type SyncStatus = 'pending_insert' | 'pending_update' | 'synced';
 
+export type UserRole = 'tenant' | 'landlord';
+
+export type LinkStatus = 'pending' | 'active' | 'revoked';
+
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'cancelled';
+
 // -------------------------------------------------------
 // Row shapes (what you get back from Supabase)
 // -------------------------------------------------------
@@ -32,6 +38,7 @@ export interface Profile {
   display_name: string | null;
   expo_push_token: string | null;
   jurisdiction: string;
+  role: UserRole;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +71,10 @@ export interface Issue {
   created_at: string;
 }
 
+export interface IssueWithTenant extends Issue {
+  tenant_display_name: string | null;
+}
+
 export interface Photo {
   id: string;
   issue_id: string;
@@ -75,6 +86,7 @@ export interface Photo {
   longitude: number | null;
   photo_hash: string;
   local_id: string | null;
+  update_id: string | null;
   created_at: string;
 }
 
@@ -95,6 +107,44 @@ export interface HeatmapCell {
   lng: number;
   category: IssueCategory;
   report_count: number;
+}
+
+export interface LandlordTenantLink {
+  id: string;
+  landlord_id: string;
+  tenant_id: string;
+  status: LinkStatus;
+  invited_by: string;
+  created_at: string;
+  accepted_at: string | null;
+}
+
+export interface LandlordTenantLinkWithProfile extends LandlordTenantLink {
+  /** display_name of the other party (tenant for landlord, landlord for tenant) */
+  other_display_name: string | null;
+  other_email: string | null;
+}
+
+export interface Invitation {
+  id: string;
+  inviter_id: string;
+  invitee_email: string;
+  token: string;
+  role_to_give: UserRole;
+  status: InvitationStatus;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface PendingInvitation {
+  id: string;
+  inviter_id: string;
+  invitee_email: string;
+  role_to_give: UserRole;
+  token: string;
+  created_at: string;
+  expires_at: string;
+  inviter_name: string | null;
 }
 
 // -------------------------------------------------------
@@ -133,6 +183,7 @@ export interface IssueUpdate {
   event_type: IssueUpdateEventType;
   note: string | null;
   status_value: IssueStatus | null;
+  created_by_name: string | null;
   created_at: string;
 }
 
@@ -179,15 +230,37 @@ export interface Database {
         Insert: CommunicationInsert;
         Update: Partial<CommunicationInsert>;
       };
+      landlord_tenant_links: {
+        Row: LandlordTenantLink;
+        Insert: Omit<LandlordTenantLink, 'id' | 'created_at'>;
+        Update: Partial<Omit<LandlordTenantLink, 'id' | 'created_at'>>;
+      };
+      invitations: {
+        Row: Invitation;
+        Insert: Omit<Invitation, 'id' | 'token' | 'created_at' | 'expires_at'>;
+        Update: Partial<Omit<Invitation, 'id' | 'token' | 'created_at'>>;
+      };
     };
     Functions: {
       get_heatmap_data: {
-        Args: {
-          center_lat: number;
-          center_lng: number;
-          radius_km?: number;
-        };
+        Args: { center_lat: number; center_lng: number; radius_km?: number };
         Returns: HeatmapCell[];
+      };
+      accept_invitation: {
+        Args: { p_token: string };
+        Returns: { invitation_id: string; invitee_email: string; role_to_give: UserRole };
+      };
+      reject_invitation: {
+        Args: { p_token: string };
+        Returns: void;
+      };
+      send_in_app_invitation: {
+        Args: { p_email: string };
+        Returns: { invitation_id: string };
+      };
+      check_pending_invitations_for_me: {
+        Args: Record<string, never>;
+        Returns: PendingInvitation[];
       };
     };
   };
