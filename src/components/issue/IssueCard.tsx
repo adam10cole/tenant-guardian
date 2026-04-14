@@ -6,6 +6,9 @@ import type { LocalIssue } from '@/types/database';
 
 interface IssueCardProps {
   issue: LocalIssue;
+  tenantName?: string | null;
+  /** Override the navigation target — use when the natural local_id would be wrong (e.g. landlord view) */
+  linkId?: string;
 }
 
 function formatDate(iso: string): string {
@@ -16,7 +19,7 @@ function formatDate(iso: string): string {
   });
 }
 
-export function IssueCard({ issue }: IssueCardProps) {
+export function IssueCard({ issue, tenantName, linkId }: IssueCardProps) {
   const daysLeft = daysUntilDeadline(issue.legal_deadline_at);
   const isPending = issue.sync_status !== 'synced';
 
@@ -39,8 +42,9 @@ export function IssueCard({ issue }: IssueCardProps) {
           : `${daysLeft}d until deadline`;
 
   return (
-    <Link href={`/issue/${issue.local_id ?? issue.id}`} asChild>
+    <Link href={`/issue/${linkId ?? issue.local_id ?? issue.id}`} asChild>
       <TouchableOpacity className="bg-white rounded-xl p-4 shadow-sm active:opacity-80">
+        {tenantName && <Text className="text-xs text-gray-400 mb-1">{tenantName}</Text>}
         <View className="flex-row items-start justify-between mb-2">
           <Text className="text-base font-semibold text-gray-900 capitalize flex-1 mr-2">
             {issue.category.replace('_', ' ')}

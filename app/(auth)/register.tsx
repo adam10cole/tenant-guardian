@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { UserRole } from '@/types/database';
 import {
   View,
   Text,
@@ -20,6 +21,7 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [jurisdiction, setJurisdiction] = useState('MI-ANN-ARBOR');
+  const [role, setRole] = useState<UserRole>('tenant');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
@@ -35,16 +37,20 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      // Pass profile fields as user metadata so the DB trigger can set them
+      // immediately — before email confirmation grants a session.
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            display_name: displayName,
+            role,
+            jurisdiction: role === 'tenant' ? jurisdiction : 'MI-GENERAL',
+          },
+        },
+      });
       if (error) throw error;
-
-      if (data.user) {
-        // Profile is auto-created by the database trigger; update display_name and jurisdiction
-        await supabase
-          .from('profiles')
-          .update({ display_name: displayName, jurisdiction })
-          .eq('id', data.user.id);
-      }
 
       Alert.alert(
         'Check your email',
@@ -66,6 +72,30 @@ export default function RegisterScreen() {
       <ScrollView className="flex-1" contentContainerClassName="px-6 py-10">
         <Text className="text-3xl font-bold text-primary-600 mb-2">Create Account</Text>
         <Text className="text-base text-gray-500 mb-8">Your data stays yours.</Text>
+
+        <Text className="text-sm font-semibold text-gray-700 mb-2">I am a...</Text>
+        <View className="flex-row gap-3 mb-6">
+          <TouchableOpacity
+            className={`flex-1 py-3 rounded-lg border items-center ${role === 'tenant' ? 'bg-primary-600 border-primary-600' : 'bg-white border-gray-300'}`}
+            onPress={() => setRole('tenant')}
+          >
+            <Text
+              className={`font-semibold text-sm ${role === 'tenant' ? 'text-white' : 'text-gray-700'}`}
+            >
+              Tenant
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className={`flex-1 py-3 rounded-lg border items-center ${role === 'landlord' ? 'bg-primary-600 border-primary-600' : 'bg-white border-gray-300'}`}
+            onPress={() => setRole('landlord')}
+          >
+            <Text
+              className={`font-semibold text-sm ${role === 'landlord' ? 'text-white' : 'text-gray-700'}`}
+            >
+              Property Manager
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         <Text className="text-sm font-semibold text-gray-700 mb-1">Full Name</Text>
         <TextInput
@@ -98,22 +128,26 @@ export default function RegisterScreen() {
           textContentType="newPassword"
         />
 
-        <Text className="text-sm font-semibold text-gray-700 mb-1">City / Jurisdiction</Text>
-        <View className="border border-gray-300 rounded-lg mb-6 overflow-hidden">
-          {JURISDICTIONS.map((j) => (
-            <TouchableOpacity
-              key={j}
-              className={`px-4 py-3 ${jurisdiction === j ? 'bg-primary-100' : 'bg-white'}`}
-              onPress={() => setJurisdiction(j)}
-            >
-              <Text
-                className={`text-base ${jurisdiction === j ? 'text-primary-700 font-semibold' : 'text-gray-700'}`}
-              >
-                {j.replace('MI-', '').replace(/-/g, ' ')}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {role === 'tenant' && (
+          <>
+            <Text className="text-sm font-semibold text-gray-700 mb-1">City / Jurisdiction</Text>
+            <View className="border border-gray-300 rounded-lg mb-6 overflow-hidden">
+              {JURISDICTIONS.map((j) => (
+                <TouchableOpacity
+                  key={j}
+                  className={`px-4 py-3 ${jurisdiction === j ? 'bg-primary-100' : 'bg-white'}`}
+                  onPress={() => setJurisdiction(j)}
+                >
+                  <Text
+                    className={`text-base ${jurisdiction === j ? 'text-primary-700 font-semibold' : 'text-gray-700'}`}
+                  >
+                    {j.replace('MI-', '').replace(/-/g, ' ')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
 
         <TouchableOpacity
           className={`rounded-lg py-4 items-center ${loading ? 'bg-primary-300' : 'bg-primary-600'}`}

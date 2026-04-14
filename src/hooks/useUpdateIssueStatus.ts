@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
 import { enqueueIssueWrite, enqueueIssueUpdateWrite } from '@/lib/sync/queue';
+import { useProfileStore } from '@/store/profileStore';
 import type { IssueInsert, IssueStatus } from '@/types/database';
 
 function generateLocalId(): string {
@@ -22,6 +23,7 @@ export function useUpdateIssueStatus(
   userId: string | undefined,
 ) {
   const queryClient = useQueryClient();
+  const profile = useProfileStore((s) => s.profile);
 
   return useMutation({
     mutationFn: async ({ status, currentLandlordNotifiedAt }: UpdateStatusVars) => {
@@ -29,6 +31,7 @@ export function useUpdateIssueStatus(
       if (!userId) throw new Error('No user ID available');
 
       const clientUpdatedAt = new Date().toISOString();
+      const createdByName = profile?.display_name ?? null;
       const landlordNotifiedAt =
         status === 'landlord_notified' && currentLandlordNotifiedAt === null
           ? clientUpdatedAt
@@ -51,9 +54,9 @@ export function useUpdateIssueStatus(
       const updateLocalId = generateLocalId();
       await db.runAsync(
         `INSERT INTO issue_updates
-         (local_id, issue_local_id, user_id, event_type, status_value, created_at, sync_status)
-         VALUES (?, ?, ?, 'status_change', ?, ?, 'pending_insert')`,
-        [updateLocalId, localId, userId, status, clientUpdatedAt],
+         (local_id, issue_local_id, user_id, event_type, status_value, created_by_name, created_at, sync_status)
+         VALUES (?, ?, ?, 'status_change', ?, ?, ?, 'pending_insert')`,
+        [updateLocalId, localId, userId, status, createdByName, clientUpdatedAt],
       );
       await enqueueIssueUpdateWrite(updateLocalId, {
         local_id: updateLocalId,
@@ -62,6 +65,7 @@ export function useUpdateIssueStatus(
         event_type: 'status_change',
         note: null,
         status_value: status,
+        created_by_name: createdByName,
         created_at: clientUpdatedAt,
       });
     },

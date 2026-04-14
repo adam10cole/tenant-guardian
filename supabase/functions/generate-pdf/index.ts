@@ -73,10 +73,12 @@ interface BuildingRow {
 
 interface IssueUpdateRow {
   id: string;
+  user_id: string;
   event_type: string;
   note: string | null;
   status_value: string | null;
   created_at: string;
+  created_by_name: string | null;
 }
 
 // -------------------------------------------------------
@@ -170,7 +172,7 @@ Deno.serve(async (req: Request) => {
         .order('occurred_at', { ascending: true }),
       adminClient
         .from('issue_updates')
-        .select('id, event_type, note, status_value, created_at')
+        .select('id, user_id, event_type, note, status_value, created_at, created_by_name')
         .eq('issue_id', issueId)
         .order('created_at', { ascending: true }),
     ]);
@@ -195,7 +197,7 @@ Deno.serve(async (req: Request) => {
     addIssuePage(pdfDoc, helvetica, helveticaBold, issue);
 
     if (updates.length > 0) {
-      addTimelinePage(pdfDoc, helvetica, helveticaBold, issue, updates);
+      addTimelinePage(pdfDoc, helvetica, helveticaBold, issue, updates, issue.user_id);
     }
 
     if (communications.length > 0) {
@@ -451,6 +453,7 @@ function addTimelinePage(
   boldFont: PDFFont,
   issue: IssueRow,
   updates: IssueUpdateRow[],
+  issueOwnerId: string,
 ): void {
   const page = pdfDoc.addPage([612, 792]);
   const { width, height } = page.getSize();
@@ -467,18 +470,20 @@ function addTimelinePage(
   };
 
   type Entry =
-    | { kind: 'initial'; date: string; note: string | null }
-    | { kind: 'update'; date: string; note: string | null }
-    | { kind: 'status_change'; date: string; status: string | null };
+    | { kind: 'initial'; date: string; note: string | null; author: null }
+    | { kind: 'update'; date: string; note: string | null; author: string; role: string }
+    | { kind: 'status_change'; date: string; status: string | null; author: string; role: string };
 
   const entries: Entry[] = [
-    { kind: 'initial', date: issue.first_reported_at, note: issue.description },
-    ...updates.map(
-      (u): Entry =>
-        u.event_type === 'status_change'
-          ? { kind: 'status_change', date: u.created_at, status: u.status_value }
-          : { kind: 'update', date: u.created_at, note: u.note },
-    ),
+    { kind: 'initial', date: issue.first_reported_at, note: issue.description, author: null },
+    ...updates.map((u): Entry => {
+      const isTenant = u.user_id === issueOwnerId;
+      const role = isTenant ? 'Tenant' : 'Property Manager';
+      const author = u.created_by_name ?? (isTenant ? 'Tenant' : 'Property Manager');
+      return u.event_type === 'status_change'
+        ? { kind: 'status_change', date: u.created_at, status: u.status_value, author, role }
+        : { kind: 'update', date: u.created_at, note: u.note, author, role };
+    }),
   ];
 
   for (const entry of entries) {
@@ -516,8 +521,19 @@ function addTimelinePage(
       color: rgb(0.5, 0.5, 0.5),
     });
 
+    if (entry.author !== null) {
+      y -= 14;
+      page.drawText(`${entry.author} · ${entry.role}`, {
+        x: 65,
+        y,
+        size: 8,
+        font,
+        color: rgb(0.45, 0.45, 0.55),
+      });
+    }
+
     if (detail) {
-      y -= 16;
+      y -= 14;
       page.drawText(detail, {
         x: 65,
         y,

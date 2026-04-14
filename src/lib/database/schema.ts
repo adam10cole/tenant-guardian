@@ -114,4 +114,10 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
         ON issue_updates(issue_local_id, created_at);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE issue_updates ADD COLUMN created_by_name TEXT;
+    `,
+  },
 ];

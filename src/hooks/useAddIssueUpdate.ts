@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
 import { enqueueIssueUpdateWrite, enqueuePhotoUpload } from '@/lib/sync/queue';
+import { useProfileStore } from '@/store/profileStore';
 import type { WizardPhoto } from '@/store/issueWizardStore';
 
 function generateLocalId(): string {
@@ -19,6 +20,7 @@ interface AddUpdateVars {
 
 export function useAddIssueUpdate(issueLocalId: string | null | undefined, routeId: string) {
   const queryClient = useQueryClient();
+  const profile = useProfileStore((s) => s.profile);
 
   return useMutation({
     mutationFn: async ({ userId, note, photos }: AddUpdateVars) => {
@@ -26,12 +28,13 @@ export function useAddIssueUpdate(issueLocalId: string | null | undefined, route
       const db = await getDb();
       const updateLocalId = generateLocalId();
       const now = new Date().toISOString();
+      const createdByName = profile?.display_name ?? null;
 
       await db.runAsync(
         `INSERT INTO issue_updates
-         (local_id, issue_local_id, user_id, event_type, note, created_at, sync_status)
-         VALUES (?, ?, ?, 'update', ?, ?, 'pending_insert')`,
-        [updateLocalId, issueLocalId, userId, note || null, now],
+         (local_id, issue_local_id, user_id, event_type, note, created_by_name, created_at, sync_status)
+         VALUES (?, ?, ?, 'update', ?, ?, ?, 'pending_insert')`,
+        [updateLocalId, issueLocalId, userId, note || null, createdByName, now],
       );
 
       await enqueueIssueUpdateWrite(updateLocalId, {
@@ -41,6 +44,7 @@ export function useAddIssueUpdate(issueLocalId: string | null | undefined, route
         event_type: 'update',
         note: note || null,
         status_value: null,
+        created_by_name: createdByName,
         created_at: now,
       });
 
