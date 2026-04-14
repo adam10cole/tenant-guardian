@@ -491,8 +491,8 @@ export async function seedFromSupabase(userId: string): Promise<void> {
 
       await db.runAsync(
         `INSERT OR REPLACE INTO issue_updates
-         (id, local_id, issue_local_id, issue_id, user_id, event_type, note, status_value, created_at, sync_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+         (id, local_id, issue_local_id, issue_id, user_id, event_type, note, status_value, created_by_name, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
         [
           update.id,
           localId,
@@ -502,6 +502,7 @@ export async function seedFromSupabase(userId: string): Promise<void> {
           update.event_type,
           update.note ?? null,
           update.status_value ?? null,
+          (update as { created_by_name?: string | null }).created_by_name ?? null,
           update.created_at,
         ],
       );
