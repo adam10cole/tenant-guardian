@@ -1,7 +1,10 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useRole } from '@/store/profileStore';
 
 export default function TabsLayout() {
+  const role = useRole();
+
   return (
     <Tabs
       screenOptions={{
@@ -16,8 +19,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'My Issues',
-          tabBarLabel: 'Issues',
+          title: role === 'landlord' ? 'Tenant Issues' : 'My Issues',
+          tabBarLabel: role === 'landlord' ? 'Tenants' : 'Issues',
           tabBarIcon: ({ focused, color }) => (
             <Ionicons name={focused ? 'list' : 'list-outline'} size={24} color={color} />
           ),
@@ -29,6 +32,15 @@ export default function TabsLayout() {
           title: 'Heatmap',
           tabBarIcon: ({ focused, color }) => (
             <Ionicons name={focused ? 'map' : 'map-outline'} size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="connections"
+        options={{
+          title: 'Connections',
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'people' : 'people-outline'} size={24} color={color} />
           ),
         }}
       />

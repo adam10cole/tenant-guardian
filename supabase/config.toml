@@ -72,3 +72,6 @@ verify_jwt = true
 
 [functions.heatmap-aggregate]
 verify_jwt = true
+
+[functions.send-invitation]
+verify_jwt = false
