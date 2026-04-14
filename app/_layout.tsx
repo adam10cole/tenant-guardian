@@ -12,6 +12,10 @@ import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '@/store/authStore';
 import { useOfflineQueue } from '@/hooks/useOfflineQueue';
 import { seedFromSupabase } from '@/lib/sync/queue';
+import { getDb } from '@/lib/database/client';
+
+// Kick off DB init immediately — don't wait for auth to resolve
+getDb().catch(() => {});
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,8 +55,10 @@ function AppServices() {
   useEffect(() => {
     const userId = session?.user.id ?? null;
     if (userId && userId !== prevUserIdRef.current) {
-      // New user logged in — seed local DB from Supabase if empty
-      seedFromSupabase(userId).catch(() => {});
+      // New user logged in — seed local DB from Supabase if empty, then refresh issues
+      seedFromSupabase(userId)
+        .catch(() => {})
+        .finally(() => queryClient.invalidateQueries({ queryKey: ['issues', userId] }));
     }
     prevUserIdRef.current = userId;
   }, [session]);

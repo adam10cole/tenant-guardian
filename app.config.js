@@ -23,9 +23,6 @@ module.exports = {
         NSLocationWhenInUseUsageDescription:
           'Geotag your photos for stronger legal evidence.',
       },
-      config: {
-        googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
-      },
     },
     android: {
       adaptiveIcon: {
@@ -44,11 +41,6 @@ module.exports = {
       ],
       minSdkVersion: 23,
       edgeToEdgeEnabled: true,
-      config: {
-        googleMaps: {
-          apiKey: process.env.GOOGLE_MAPS_API_KEY,
-        },
-      },
     },
     web: {
       bundler: 'metro',
@@ -56,6 +48,7 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      '@maplibre/maplibre-react-native',
       'expo-router',
       'expo-secure-store',
       [

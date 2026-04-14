@@ -8,7 +8,7 @@ import {
   TextInput,
   Image,
 } from 'react-native';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
@@ -96,6 +96,8 @@ export default function IssueDetailScreen() {
   const statusMutation = useUpdateIssueStatus(issue?.local_id, id, userId);
   const addUpdateMutation = useAddIssueUpdate(issue?.local_id, id);
   const { takePhoto, pickFromLibrary } = useCamera();
+
+  const scrollRef = useRef<ScrollView>(null);
 
   // PhotoViewer state
   const [viewerPhotos, setViewerPhotos] = useState<ViewerPhoto[]>([]);
@@ -258,7 +260,7 @@ export default function IssueDetailScreen() {
   const daysLeft = daysUntilDeadline(issue.legal_deadline_at);
 
   return (
-    <ScrollView className="flex-1 bg-gray-50">
+    <ScrollView ref={scrollRef} className="flex-1 bg-gray-50" automaticallyAdjustKeyboardInsets>
       {/* Issue summary */}
       <View className="bg-white mx-4 mt-4 rounded-xl p-4 shadow-sm">
         <View className="flex-row items-center justify-between mb-2">
@@ -323,6 +325,9 @@ export default function IssueDetailScreen() {
             textAlignVertical="top"
             value={updateNote}
             onChangeText={setUpdateNote}
+            onFocus={() =>
+              setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 350)
+            }
           />
 
           <View className="flex-row gap-3 mt-3">

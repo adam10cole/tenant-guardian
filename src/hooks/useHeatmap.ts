@@ -5,6 +5,7 @@ import type { HeatmapCell } from '@/types/database';
 
 export function useHeatmap(radiusKm: number = 10) {
   const [points, setPoints] = useState<HeatmapCell[]>([]);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -24,6 +25,13 @@ export function useHeatmap(radiusKm: number = 10) {
         const location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
+
+        if (!cancelled) {
+          setUserCoords({
+            lat: location.coords.latitude,
+            lng: location.coords.longitude,
+          });
+        }
 
         const { data, error: rpcError } = await supabase.rpc('get_heatmap_data', {
           center_lat: location.coords.latitude,
@@ -46,5 +54,5 @@ export function useHeatmap(radiusKm: number = 10) {
     };
   }, [radiusKm]);
 
-  return { points, isLoading, error };
+  return { points, userCoords, isLoading, error };
 }

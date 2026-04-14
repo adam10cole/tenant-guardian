@@ -1,9 +1,46 @@
+import { useRef } from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
-import MapView, { Heatmap, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapLibreGL from '@maplibre/maplibre-react-native';
 import { useHeatmap } from '@/hooks/useHeatmap';
+import type { HeatmapCell } from '@/types/database';
+
+MapLibreGL.setAccessToken(null);
+
+const MAP_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+    },
+  },
+  layers: [
+    {
+      id: 'osm-tiles',
+      type: 'raster',
+      source: 'osm',
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+};
+
+function buildGeoJSON(points: HeatmapCell[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: points.map((p) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+      properties: { weight: Number(p.report_count) },
+    })),
+  };
+}
 
 export default function HeatmapScreen() {
-  const { points, isLoading, error } = useHeatmap();
+  const { points, userCoords, isLoading, error } = useHeatmap();
+  const cameraRef = useRef<MapLibreGL.Camera>(null);
 
   if (error) {
     return (
@@ -15,28 +52,58 @@ export default function HeatmapScreen() {
 
   return (
     <View className="flex-1">
-      <MapView
+      <MapLibreGL.MapView
         style={{ flex: 1 }}
-        provider={PROVIDER_GOOGLE}
-        initialRegion={{
-          latitude: 42.2808,
-          longitude: -83.743,
-          latitudeDelta: 0.15,
-          longitudeDelta: 0.15,
-        }}
+        mapStyle={MAP_STYLE}
+        logoEnabled={false}
+        attributionEnabled={false}
       >
+        <MapLibreGL.UserLocation visible />
+        <MapLibreGL.Camera
+          ref={cameraRef}
+          defaultSettings={{ centerCoordinate: [-83.743, 42.2808], zoomLevel: 11 }}
+          {...(userCoords
+            ? {
+                centerCoordinate: [userCoords.lng, userCoords.lat],
+                zoomLevel: 17,
+                animationMode: 'flyTo',
+                animationDuration: 800,
+              }
+            : {})}
+        />
+
         {points.length > 0 && (
-          <Heatmap
-            points={points.map((p) => ({
-              latitude: p.lat,
-              longitude: p.lng,
-              weight: Number(p.report_count),
-            }))}
-            radius={30}
-            opacity={0.7}
-          />
+          <MapLibreGL.ShapeSource id="heatmap-source" shape={buildGeoJSON(points)}>
+            <MapLibreGL.HeatmapLayer
+              id="heatmap-layer"
+              sourceID="heatmap-source"
+              style={{
+                heatmapRadius: 30,
+                heatmapOpacity: 0.7,
+                heatmapWeight: ['get', 'weight'],
+                heatmapIntensity: 1,
+                heatmapColor: [
+                  'interpolate',
+                  ['linear'],
+                  ['heatmap-density'],
+                  0,
+                  'rgba(33,102,172,0)',
+                  0.2,
+                  'rgb(103,169,207)',
+                  0.4,
+                  'rgb(209,229,240)',
+                  0.6,
+                  'rgb(253,219,199)',
+                  0.8,
+                  'rgb(239,138,98)',
+                  1,
+                  'rgb(178,24,43)',
+                ],
+              }}
+            />
+          </MapLibreGL.ShapeSource>
         )}
-      </MapView>
+      </MapLibreGL.MapView>
 
       {isLoading && (
         <View className="absolute inset-0 items-center justify-center bg-white/60">
