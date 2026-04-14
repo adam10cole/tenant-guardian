@@ -32,9 +32,11 @@ function buildEntries(
     return {
       kind: 'update',
       update: u,
-      photos: photos.filter((p) =>
-        p.update_id ? p.update_id === u.id : p.update_local_id === u.local_id,
-      ),
+      photos: photos.filter((p) => {
+        if (p.update_id) return p.update_id === u.id;
+        if (p.update_local_id && u.local_id) return p.update_local_id === u.local_id;
+        return false;
+      }),
     };
   });
 
@@ -108,9 +110,16 @@ interface IssueTimelineProps {
   photos: LocalPhoto[];
   updates: LocalIssueUpdate[];
   onPhotoPress: (photos: ViewerPhoto[], index: number) => void;
+  currentUserId: string;
 }
 
-export function IssueTimeline({ issue, photos, updates, onPhotoPress }: IssueTimelineProps) {
+export function IssueTimeline({
+  issue,
+  photos,
+  updates,
+  onPhotoPress,
+  currentUserId,
+}: IssueTimelineProps) {
   const entries = buildEntries(issue, photos, updates);
 
   return (
@@ -177,6 +186,11 @@ export function IssueTimeline({ issue, photos, updates, onPhotoPress }: IssueTim
                   </Text>
                   {isPending && <View className="w-2 h-2 rounded-full bg-warning-400" />}
                 </View>
+                {entry.update.created_by_name && (
+                  <Text className="text-xs text-gray-500 mb-1">
+                    {entry.update.user_id === currentUserId ? 'You' : entry.update.created_by_name}
+                  </Text>
+                )}
                 {entry.update.note && (
                   <Text className="text-sm text-gray-700">{entry.update.note}</Text>
                 )}
@@ -212,6 +226,11 @@ export function IssueTimeline({ issue, photos, updates, onPhotoPress }: IssueTim
                     {formatDate(entry.update.created_at)}
                   </Text>
                 </View>
+                {entry.update.created_by_name && (
+                  <Text className="text-xs text-gray-500 mb-1">
+                    {entry.update.user_id === currentUserId ? 'You' : entry.update.created_by_name}
+                  </Text>
+                )}
                 <View className="flex-row items-center gap-1 mt-1">
                   <Text className="text-sm text-gray-500">→</Text>
                   {entry.update.status_value && (

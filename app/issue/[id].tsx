@@ -8,7 +8,7 @@ import {
   TextInput,
   Image,
 } from 'react-native';
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { getDb } from '@/lib/database/client';
@@ -24,8 +24,14 @@ import type { ViewerPhoto } from '@/components/camera/PhotoViewer';
 import type { WizardPhoto } from '@/store/issueWizardStore';
 import { useUpdateIssueStatus } from '@/hooks/useUpdateIssueStatus';
 import { useAddIssueUpdate } from '@/hooks/useAddIssueUpdate';
+import { useAddLandlordUpdate } from '@/hooks/useAddLandlordUpdate';
 import { useCamera } from '@/hooks/useCamera';
 import { useAuthStore } from '@/store/authStore';
+import { useRole } from '@/store/profileStore';
+
+// -------------------------------------------------------
+// SQLite fetch helpers (tenant path)
+// -------------------------------------------------------
 
 async function fetchIssue(localId: string): Promise<LocalIssue | null> {
   const db = await getDb();
@@ -42,13 +48,12 @@ async function fetchPhotos(issueLocalId: string): Promise<LocalPhoto[]> {
     [issueLocalId, issueLocalId],
   );
 
-  // For photos seeded from Supabase (no local file), generate signed URLs so they can be displayed
   const needUrls = photos.filter((p) => !p.local_path && p.storage_path);
   if (needUrls.length === 0) return photos;
 
   const { data: signed } = await supabase.storage.from('evidence-photos').createSignedUrls(
     needUrls.map((p) => p.storage_path!),
-    60 * 60, // 1 hour
+    60 * 60,
   );
 
   if (!signed) return photos;
@@ -67,6 +72,60 @@ async function fetchUpdates(issueLocalId: string): Promise<LocalIssueUpdate[]> {
   );
 }
 
+// -------------------------------------------------------
+// Supabase fetch helpers (landlord path)
+// -------------------------------------------------------
+
+async function fetchIssueFromSupabase(issueId: string): Promise<LocalIssue | null> {
+  const { data } = await supabase.from('issues').select('*').eq('id', issueId).single();
+  return data ? ({ ...data, sync_status: 'synced' } as LocalIssue) : null;
+}
+
+async function fetchPhotosFromSupabase(issueId: string): Promise<LocalPhoto[]> {
+  const { data } = await supabase
+    .from('photos')
+    .select('*')
+    .eq('issue_id', issueId)
+    .order('taken_at', { ascending: true });
+
+  const photos = (data ?? []).map((p) => ({
+    ...p,
+    sync_status: 'synced' as const,
+    local_path: null as string | null,
+    update_local_id: null as string | null,
+  })) as LocalPhoto[];
+
+  const needUrls = photos.filter((p) => p.storage_path);
+  if (needUrls.length === 0) return photos;
+
+  const { data: signed } = await supabase.storage.from('evidence-photos').createSignedUrls(
+    needUrls.map((p) => p.storage_path!),
+    60 * 60,
+  );
+
+  if (!signed) return photos;
+
+  const urlMap = new Map(signed.map((s) => [s.path, s.signedUrl]));
+  return photos.map((p) =>
+    p.storage_path ? { ...p, local_path: urlMap.get(p.storage_path) ?? null } : p,
+  );
+}
+
+async function fetchUpdatesFromSupabase(issueId: string): Promise<LocalIssueUpdate[]> {
+  const { data } = await supabase
+    .from('issue_updates')
+    .select('*')
+    .eq('issue_id', issueId)
+    .order('created_at', { ascending: true });
+
+  return (data ?? []).map((u) => ({
+    ...u,
+    sync_status: 'synced' as const,
+    issue_local_id: '',
+    local_id: null,
+  })) as LocalIssueUpdate[];
+}
+
 const THUMB_SIZE = 64;
 
 export default function IssueDetailScreen() {
@@ -74,36 +133,78 @@ export default function IssueDetailScreen() {
   const router = useRouter();
   const { session } = useAuthStore();
   const userId = session?.user.id;
+  const role = useRole();
+  const isLandlord = role === 'landlord';
 
-  const { data: issue, isLoading } = useQuery({
+  // Tenant queries (SQLite)
+  const { data: tenantIssue, isLoading: tenantIssueLoading } = useQuery({
     queryKey: ['issue', id],
     queryFn: () => fetchIssue(id),
-    enabled: !!id,
+    enabled: !!id && !isLandlord,
   });
 
-  const { data: photos = [] } = useQuery({
+  const { data: tenantPhotos = [] } = useQuery({
     queryKey: ['photos', id],
     queryFn: () => fetchPhotos(id),
-    enabled: !!id,
+    enabled: !!id && !isLandlord,
   });
 
-  const { data: updates = [] } = useQuery({
+  const { data: tenantUpdates = [] } = useQuery({
     queryKey: ['updates', id],
     queryFn: () => fetchUpdates(id),
-    enabled: !!id,
+    enabled: !!id && !isLandlord,
   });
+
+  // Landlord queries (Supabase direct)
+  const { data: landlordIssue, isLoading: landlordIssueLoading } = useQuery({
+    queryKey: ['landlord-issue', id],
+    queryFn: () => fetchIssueFromSupabase(id),
+    enabled: !!id && isLandlord,
+  });
+
+  const { data: landlordPhotos = [] } = useQuery({
+    queryKey: ['landlord-issue-photos', id],
+    queryFn: () => fetchPhotosFromSupabase(id),
+    enabled: !!id && isLandlord,
+  });
+
+  const { data: landlordUpdates = [] } = useQuery({
+    queryKey: ['landlord-issue-updates', id],
+    queryFn: () => fetchUpdatesFromSupabase(id),
+    enabled: !!id && isLandlord,
+  });
+
+  const issue = isLandlord ? landlordIssue : tenantIssue;
+  const photos = isLandlord ? landlordPhotos : tenantPhotos;
+  const isLoading = isLandlord ? landlordIssueLoading : tenantIssueLoading;
+
+  // For tenants: also pull updates from Supabase to catch landlord-posted updates
+  // that went directly to Supabase and were never written to SQLite.
+  const { data: remoteUpdates = [] } = useQuery({
+    queryKey: ['updates-remote', issue?.id],
+    queryFn: () => fetchUpdatesFromSupabase(issue!.id),
+    enabled: !isLandlord && !!issue?.id,
+    staleTime: 1000 * 30,
+  });
+
+  const updates = useMemo(() => {
+    if (isLandlord) return landlordUpdates;
+    // Merge SQLite + remote, deduplicating by Supabase id (SQLite rows take precedence)
+    const seenIds = new Set(tenantUpdates.map((u) => u.id).filter(Boolean));
+    const extra = remoteUpdates.filter((u) => u.id && !seenIds.has(u.id));
+    return [...tenantUpdates, ...extra].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [isLandlord, tenantUpdates, landlordUpdates, remoteUpdates]);
 
   const statusMutation = useUpdateIssueStatus(issue?.local_id, id, userId);
   const addUpdateMutation = useAddIssueUpdate(issue?.local_id, id);
+  const addLandlordUpdateMutation = useAddLandlordUpdate(id);
   const { takePhoto, pickFromLibrary } = useCamera();
 
   const scrollRef = useRef<ScrollView>(null);
 
-  // PhotoViewer state
   const [viewerPhotos, setViewerPhotos] = useState<ViewerPhoto[]>([]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
-  // Add-update form state
   const [showAddUpdate, setShowAddUpdate] = useState(false);
   const [updateNote, setUpdateNote] = useState('');
   const [stagedPhotos, setStagedPhotos] = useState<WizardPhoto[]>([]);
@@ -177,7 +278,6 @@ export default function IssueDetailScreen() {
 
       const { signedUrl } = JSON.parse(responseText);
 
-      // Download the PDF to a local temp file then open the native share sheet
       const localPath = `${FileSystem.cacheDirectory}evidence-report-${issue.id}.pdf`;
       const download = await FileSystem.downloadAsync(signedUrl, localPath);
       if (download.status !== 200) {
@@ -223,20 +323,40 @@ export default function IssueDetailScreen() {
       Alert.alert('Empty update', 'Please add a note or photo before saving.');
       return;
     }
-    addUpdateMutation.mutate(
-      { userId, note: updateNote.trim(), photos: stagedPhotos },
-      {
-        onSuccess: () => {
-          setShowAddUpdate(false);
-          setUpdateNote('');
-          setStagedPhotos([]);
+
+    if (isLandlord) {
+      addLandlordUpdateMutation.mutate(
+        { note: updateNote.trim() },
+        {
+          onSuccess: () => {
+            setShowAddUpdate(false);
+            setUpdateNote('');
+          },
+          onError: (err) => {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Could not save update');
+          },
         },
-        onError: (err) => {
-          Alert.alert('Error', err instanceof Error ? err.message : 'Could not save update');
+      );
+    } else {
+      addUpdateMutation.mutate(
+        { userId, note: updateNote.trim(), photos: stagedPhotos },
+        {
+          onSuccess: () => {
+            setShowAddUpdate(false);
+            setUpdateNote('');
+            setStagedPhotos([]);
+          },
+          onError: (err) => {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Could not save update');
+          },
         },
-      },
-    );
+      );
+    }
   }
+
+  const isSavingUpdate = isLandlord
+    ? addLandlordUpdateMutation.isPending
+    : addUpdateMutation.isPending;
 
   if (isLoading) {
     return (
@@ -311,6 +431,7 @@ export default function IssueDetailScreen() {
           photos={photos}
           updates={updates}
           onPhotoPress={handlePhotoPress}
+          currentUserId={userId ?? ''}
         />
       </View>
 
@@ -330,20 +451,23 @@ export default function IssueDetailScreen() {
             }
           />
 
-          <View className="flex-row gap-3 mt-3">
-            <TouchableOpacity
-              className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
-              onPress={handleTakePhoto}
-            >
-              <Text className="text-sm text-gray-700">📷 Camera</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
-              onPress={handlePickPhoto}
-            >
-              <Text className="text-sm text-gray-700">🖼 Library</Text>
-            </TouchableOpacity>
-          </View>
+          {/* Photo buttons — tenants only */}
+          {!isLandlord && (
+            <View className="flex-row gap-3 mt-3">
+              <TouchableOpacity
+                className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
+                onPress={handleTakePhoto}
+              >
+                <Text className="text-sm text-gray-700">📷 Camera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 flex-row items-center justify-center gap-1 border border-gray-300 rounded-lg py-2"
+                onPress={handlePickPhoto}
+              >
+                <Text className="text-sm text-gray-700">🖼 Library</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {stagedPhotos.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3">
@@ -373,10 +497,10 @@ export default function IssueDetailScreen() {
             <TouchableOpacity
               className="flex-1 bg-primary-600 rounded-xl py-3 items-center"
               onPress={handleSaveUpdate}
-              disabled={addUpdateMutation.isPending}
+              disabled={isSavingUpdate}
             >
               <Text className="text-white font-semibold text-sm">
-                {addUpdateMutation.isPending ? 'Saving…' : 'Save Update'}
+                {isSavingUpdate ? 'Saving…' : 'Save Update'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -405,32 +529,34 @@ export default function IssueDetailScreen() {
         </View>
       )}
 
-      {/* Actions */}
-      <View className="mx-4 mt-3 gap-3">
-        <TouchableOpacity
-          className="bg-white border border-gray-300 rounded-xl py-4 items-center"
-          onPress={handleChangeStatus}
-          disabled={statusMutation.isPending}
-        >
-          <Text className="text-gray-700 font-semibold text-base">
-            {statusMutation.isPending ? 'Updating…' : 'Change Status'}
-          </Text>
-        </TouchableOpacity>
+      {/* Tenant-only actions */}
+      {!isLandlord && (
+        <View className="mx-4 mt-3 gap-3">
+          <TouchableOpacity
+            className="bg-white border border-gray-300 rounded-xl py-4 items-center"
+            onPress={handleChangeStatus}
+            disabled={statusMutation.isPending}
+          >
+            <Text className="text-gray-700 font-semibold text-base">
+              {statusMutation.isPending ? 'Updating…' : 'Change Status'}
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          className="bg-primary-600 rounded-xl py-4 items-center"
-          onPress={handleGeneratePdf}
-          disabled={isPdfGenerating}
-        >
-          {isPdfGenerating ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            className="bg-primary-600 rounded-xl py-4 items-center"
+            onPress={handleGeneratePdf}
+            disabled={isPdfGenerating}
+          >
+            {isPdfGenerating ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white font-bold text-base">Generate Evidence PDF</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {issue.sync_status !== 'synced' && (
+      {!isLandlord && issue.sync_status !== 'synced' && (
         <View className="mx-4 mt-3 mb-6 p-3 bg-warning-500/10 rounded-xl">
           <Text className="text-warning-600 text-xs text-center">
             Pending sync — connect to internet to upload
